@@ -1,5 +1,5 @@
 // Service worker de Platina. Vive en la raíz para poder controlar toda la app.
-const CACHE = 'platina-v7';
+const CACHE = 'platina-v8';
 const ASSETS = ['./', './index.html', './css/aero-cobalt.css', './js/voice.js', './js/app.js'];
 const NEVER_CACHE = ['firebaseio.com', 'generativelanguage.googleapis.com', 'nominatim.openstreetmap.org'];
 
