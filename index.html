@@ -3,1027 +3,192 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#090d16">
+    <meta name="theme-color" content="#060911">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Platina v4.0 Sync</title>
-    <style>
-        :root {
-            --bg-dark: #090d16;
-            --card-bg: #131c2e;
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent-amber: #f59e0b;
-            --accent-green: #10b981;
-            --accent-red: #ef4444;
-            --accent-blue: #3b82f6;
-            --accent-purple: #8b5cf6;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-        body {
-            background-color: var(--bg-dark); color: var(--text-main);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            min-height: 100vh; display: flex; flex-direction: column; padding: 10px; overflow-x: hidden;
-        }
-        /* Top Status Bar */
-        .status-bar {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 8px 12px; background: var(--card-bg); border-radius: 12px;
-            margin-bottom: 8px; font-size: 0.78rem; border: 1px solid #1e293b;
-        }
-        .status-item { display: flex; align-items: center; gap: 6px; }
-        .dot { width: 10px; height: 10px; border-radius: 50%; background-color: var(--accent-red); }
-        .dot.searching { background-color: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber); }
-        .dot.active { background-color: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
-
-        /* Banners */
-        .banner {
-            display: none; color: white; text-align: center; padding: 10px;
-            border-radius: 10px; font-weight: 800; font-size: 0.9rem; margin-bottom: 8px;
-        }
-        #alert-banner { background-color: var(--accent-red); animation: pulse 1.5s infinite; }
-        #refuel-reminder-banner {
-            background-color: var(--accent-amber); color: #000;
-            display: none; justify-content: space-between; align-items: center; padding: 8px 12px;
-        }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.65; } 100% { opacity: 1; } }
-
-        /* Main Grid */
-        .dashboard { display: grid; grid-template-columns: 1fr; gap: 10px; flex: 1; }
-        @media (min-width: 600px) and (orientation: landscape) {
-            .dashboard { grid-template-columns: 1fr 1fr; }
-        }
-        .card {
-            background: var(--card-bg); border-radius: 16px; padding: 14px;
-            border: 1px solid #1e293b; display: flex; flex-direction: column; justify-content: space-between;
-        }
-
-        /* Speedometer */
-        .speed-container { text-align: center; padding: 4px 0; }
-        .speed-value {
-            font-size: 4.8rem; font-weight: 900; line-height: 1; color: var(--accent-amber);
-            text-shadow: 0 0 20px rgba(245, 158, 11, 0.3); font-variant-numeric: tabular-nums;
-        }
-        .speed-unit { font-size: 0.95rem; color: var(--text-muted); letter-spacing: 2px; text-transform: uppercase; }
-
-        .trip-stats {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-            margin-top: 8px; padding-top: 8px; border-top: 1px solid #1e293b;
-        }
-        .stat-box { text-align: center; }
-        .stat-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
-        .stat-val { font-size: 1.25rem; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
-
-        /* Fuel Gauge */
-        .fuel-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
-        .fuel-title { font-size: 0.9rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
-        .fuel-liters { font-size: 1.8rem; font-weight: 800; color: var(--text-main); }
-        .fuel-bar-outer {
-            width: 100%; height: 30px; background: #090d16; border-radius: 10px;
-            overflow: hidden; border: 2px solid #334155; position: relative; margin-bottom: 8px;
-        }
-        .fuel-bar-inner { height: 100%; width: 100%; background: var(--accent-green); transition: width 0.4s ease; }
-        .fuel-pct-overlay {
-            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-            display: flex; align-items: center; justify-content: center;
-            font-weight: 800; font-size: 0.95rem; text-shadow: 0 1px 3px rgba(0,0,0,0.9);
-        }
-
-        /* Buttons */
-        .btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px; }
-        .btn-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
-        button {
-            border: none; border-radius: 10px; padding: 11px 8px; font-size: 0.88rem;
-            font-weight: 700; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px;
-        }
-        button:active { transform: scale(0.96); }
-        button:disabled { opacity: 0.4; cursor: not-allowed; }
-        .btn-green { background-color: var(--accent-green); }
-        .btn-blue { background-color: var(--accent-blue); }
-        .btn-amber { background-color: var(--accent-amber); color: #000; }
-        .btn-red { background-color: var(--accent-red); }
-        .btn-purple { background-color: var(--accent-purple); }
-        .btn-dark { background-color: #334155; }
-
-        /* Modals */
-        .modal {
-            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.88); z-index: 100; padding: 14px;
-            align-items: center; justify-content: center; overflow-y: auto;
-        }
-        .modal-content {
-            background: var(--card-bg); padding: 18px; border-radius: 16px;
-            width: 100%; max-width: 480px; border: 1px solid #334155; max-height: 90vh; overflow-y: auto;
-        }
-        .form-group { margin-bottom: 12px; }
-        .form-group label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px; }
-        .form-group input {
-            width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #475569;
-            background: #090d16; color: white; font-size: 1.05rem; user-select: text; -webkit-user-select: text;
-        }
-
-        /* History Tables */
-        .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
-        .tab-btn { flex: 1; padding: 8px; background: #090d16; border: 1px solid #334155; font-size: 0.8rem; }
-        .tab-btn.active { background: var(--accent-blue); border-color: var(--accent-blue); }
-        .history-list { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; margin-bottom: 12px; }
-        .history-item { background: #090d16; padding: 10px; border-radius: 8px; border: 1px solid #1e293b; font-size: 0.8rem; }
-        .history-item-header { display: flex; justify-content: space-between; font-weight: 700; color: var(--accent-amber); margin-bottom: 4px; }
-        .history-address { color: var(--text-muted); font-size: 0.75rem; margin-top: 2px; line-height: 1.3; }
-    </style>
+    <title>Platina v6.0 — Aero Cobalt</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/aero-cobalt.css">
 </head>
 <body>
+    <header class="telemetry-header">
+        <div class="pill-badge"><div id="gps-dot" class="dot"></div><span id="gps-status">GPS: Off</span></div>
+        <div class="brand-title">PLATINA v6 • AI VOICE</div>
+        <div class="pill-badge" style="cursor:pointer;" onclick="App.openSettings()"><span id="cloud-status">☁️ Sync</span> ⚙️</div>
+    </header>
 
-    <!-- Barra de Estado -->
-    <div class="status-bar">
-        <div class="status-item">
-            <div id="gps-dot" class="dot"></div>
-            <span id="gps-status">GPS: Inactivo</span>
-        </div>
-        <div id="cloud-status">☁️ Conectando...</div>
-        <div class="status-item">
-            <button class="btn-dark" style="padding: 5px 10px; font-size: 0.75rem;" onclick="openSettings()">⚙️ Ajustes</button>
-        </div>
-    </div>
-
-    <!-- Banner de Nivel Bajo -->
     <div id="alert-banner" class="banner">⚠️ ¡NIVEL DE GASOLINA BAJO!</div>
-
-    <!-- Banner de Recordatorio de Recarga Hoy -->
     <div id="refuel-reminder-banner" class="banner">
         <span>⛽ Recordatorio: Hoy planeaste recargar gas</span>
-        <button class="btn-dark" style="padding: 4px 8px; font-size: 0.75rem;" onclick="openRefuelModal()">Meter Litros</button>
+        <button class="btn-amber" style="padding:4px 10px;font-size:0.75rem;" onclick="App.openRefuelModal()">Cargar</button>
     </div>
 
-    <!-- Tablero Principal -->
-    <div class="dashboard">
-        <!-- Tarjeta de Velocidad y Odómetros -->
-        <div class="card">
-            <div class="speed-container">
-                <div id="speed-display" class="speed-value">0</div>
-                <div class="speed-unit">km / h</div>
-            </div>
-
-            <div class="trip-stats">
-                <div class="stat-box">
-                    <div class="stat-label">Viaje Actual</div>
-                    <div class="stat-val"><span id="current-trip-km">0.00</span> km</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Odómetro Recarga</div>
-                    <div class="stat-val" style="color: var(--accent-amber);"><span id="refuel-odo-km">0.0</span> km</div>
+    <main class="dashboard">
+        <section class="aero-card">
+            <div class="section-tag">⚡ TELEMETRÍA DE RUTA</div>
+            <div class="speed-cluster">
+                <div id="speed-ring" class="speed-ring">
+                    <div id="speed-display" class="speed-value">0</div>
+                    <div class="speed-unit">KM / H</div>
                 </div>
             </div>
-
-            <div class="btn-grid" style="margin-top: 10px;">
-                <button id="btn-gps-toggle" class="btn-green" onclick="handleStartStopClick()">▶️ Iniciar Viaje</button>
-                <button class="btn-dark" onclick="addManualKm()">➕ Viaje Manual</button>
+            <div class="metrics-row">
+                <div class="metric-tile">
+                    <div class="metric-label">Viaje Actual</div>
+                    <div class="metric-val highlight-cobalt"><span id="current-trip-km">0.00</span> <small>km</small></div>
+                </div>
+                <div class="metric-tile">
+                    <div class="metric-label">Odómetro Recarga</div>
+                    <div class="metric-val highlight-amber"><span id="refuel-odo-km">0.0</span> <small>km</small></div>
+                </div>
             </div>
-            <button id="btn-history" class="btn-blue" style="margin-top: 8px; width: 100%;" onclick="openHistoryModal()">
-                📊 Historial de Viajes y Ciclos
-            </button>
-        </div>
-
-        <!-- Tarjeta de Tanque Virtual -->
-        <div class="card">
             <div>
-                <div class="fuel-header">
-                    <span class="fuel-title">⛽ Tanque Virtual</span>
-                    <span class="fuel-liters"><span id="fuel-liters">50.0</span> L</span>
+                <div class="btn-grid">
+                    <button id="btn-gps-toggle" class="btn-emerald" onclick="App.handleStartStopClick()">▶️ Iniciar Viaje</button>
+                    <button class="btn-obsidian" onclick="App.addManualKm()">➕ Viaje Manual</button>
                 </div>
+                <button id="btn-history" class="btn-cobalt" style="margin-top:8px;width:100%;" onclick="App.openHistoryModal()">📊 Bitácora y Ciclos</button>
+            </div>
+        </section>
 
-                <div class="fuel-bar-outer">
-                    <div id="fuel-bar" class="fuel-bar-inner" style="width: 100%;"></div>
-                    <div class="fuel-pct-overlay"><span id="fuel-pct">100</span>%</div>
+        <section class="aero-card">
+            <div>
+                <div class="fuel-top-row">
+                    <div class="section-tag">⛽ TANQUE VIRTUAL (50L)</div>
+                    <div class="fuel-big-reading"><span id="fuel-liters">50.0</span> <small>L</small></div>
                 </div>
-
-                <div class="trip-stats" style="margin-top: 4px; padding-top: 8px;">
-                    <div class="stat-box">
-                        <div class="stat-label">Autonomía Est.</div>
-                        <div class="stat-val" style="color: var(--accent-blue);"><span id="range-km">500</span> km</div>
+                <div class="fuel-gauge-track">
+                    <div id="fuel-bar" class="fuel-gauge-fill" style="width:100%;"></div>
+                    <div class="fuel-ticks"></div>
+                    <div class="fuel-pct-badge"><span id="fuel-pct">100</span>% CAPACIDAD</div>
+                </div>
+                <div class="metrics-row">
+                    <div class="metric-tile">
+                        <div class="metric-label">Autonomía Est.</div>
+                        <div class="metric-val highlight-cobalt"><span id="range-km">500</span> <small>km</small></div>
                     </div>
-                    <div class="stat-box">
-                        <div class="stat-label">Rendimiento</div>
-                        <div class="stat-val"><span id="efficiency-val">10.0</span> km/L</div>
+                    <div class="metric-tile">
+                        <div class="metric-label">Rendimiento Cerro</div>
+                        <div class="metric-val"><span id="efficiency-val">10.0</span> <small>km/L</small></div>
                     </div>
                 </div>
             </div>
-
             <div>
-                <div class="btn-grid" style="margin-top: 10px;">
-                    <button class="btn-amber" onclick="openRefuelModal()">⛽ Ingresar Litros / Ticket</button>
-                    <button class="btn-green" onclick="fillTankQuick()">Lleno (50L)</button>
+                <div class="btn-grid">
+                    <button class="btn-cobalt" onclick="App.openRefuelModal()">⛽ Detalle Recarga</button>
+                    <button class="btn-emerald" onclick="App.fillTankQuick()">⚡ Lleno (50L)</button>
                 </div>
-                <div class="btn-grid" style="margin-top: 8px;">
-                    <button class="btn-dark" onclick="adjustTrafficFuel()">-1 L (Tráfico Pesado)</button>
-                    <button class="btn-dark" onclick="testVoiceAlert()">🔊 Probar Voz</button>
+                <div class="btn-grid" style="margin-top:8px;">
+                    <button class="btn-obsidian" onclick="App.adjustTrafficFuel()">-1 L (Tráfico)</button>
+                    <button class="btn-obsidian" onclick="App.testVoiceAlert()">🔊 Probar Voz IA</button>
                 </div>
             </div>
-        </div>
-    </div>
+        </section>
+    </main>
 
-    <!-- MODAL 1: Pregunta Diaria "¿Recargarás gas hoy?" -->
+    <!-- Modales -->
     <div id="daily-question-modal" class="modal">
-        <div class="modal-content" style="text-align: center;">
-            <h3 style="margin-bottom: 10px; font-size: 1.3rem;">⛽ Buen día, Mario</h3>
-            <p style="color: var(--text-muted); margin-bottom: 18px; font-size: 0.95rem;">
-                ¿Planeas pasar a recargar gasolina el día de hoy?
-            </p>
+        <div class="modal-content" style="text-align:center;">
+            <div class="section-tag" style="justify-content:center;margin-bottom:8px;">☀️ ASISTENTE DE RUTA</div>
+            <h3 style="margin-bottom:8px;">Buen día, Mario</h3>
+            <p style="color:var(--text-secondary);margin-bottom:18px;font-size:0.9rem;">¿Planeas pasar a la gasolinera hoy?</p>
             <div class="btn-grid">
-                <button class="btn-amber" style="padding: 14px;" onclick="answerDailyRefuel(true)">Sí, recargaré hoy</button>
-                <button class="btn-dark" style="padding: 14px;" onclick="answerDailyRefuel(false)">No por hoy</button>
+                <button class="btn-cobalt" onclick="App.answerDailyRefuel(true)">Sí, recargaré hoy</button>
+                <button class="btn-obsidian" onclick="App.answerDailyRefuel(false)">No por hoy</button>
             </div>
         </div>
     </div>
 
-    <!-- MODAL 2: Ingresar Litros Decimales o Escanear Ticket -->
     <div id="refuel-modal" class="modal">
         <div class="modal-content">
-            <h3 style="margin-bottom: 12px;">⛽ Registrar Recarga de Gasolina</h3>
-            <p style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 12px;">
-                Al guardar, se cerrará el ciclo actual (<strong id="modal-cycle-km">0.0</strong> km recorridos) y el Odómetro por Recarga volverá a 0.0 km.
-            </p>
-
-            <div class="form-group">
-                <label>Litros recargados (ej. 1.3, 10.7, 26.9):</label>
-                <input type="number" id="input-refuel-liters" step="0.01" placeholder="Ej. 26.9">
+            <div class="modal-header">
+                <div class="modal-title">⛽ Detalle de Recarga</div>
+                <button class="btn-obsidian" style="padding:4px 10px;" onclick="App.closeModal('refuel-modal')">✕</button>
+            </div>
+            <div class="metric-tile" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
+                <span class="metric-label">Ciclo a cerrar:</span>
+                <span class="metric-val highlight-amber"><span id="modal-cycle-km">0.0</span> km</span>
             </div>
             <div class="form-group">
-                <label>Costo Total Pagado $ (Opcional, para tus reportes):</label>
+                <label>Litros Recargados:</label>
+                <input type="number" id="input-refuel-liters" step="0.01" placeholder="Ej. 10.7 o 26.9">
+            </div>
+            <div class="form-group">
+                <label>Monto Pagado $ (Opcional):</label>
                 <input type="number" id="input-refuel-cost" step="0.5" placeholder="Ej. 650.00">
             </div>
-
-            <!-- Botón de Cámara para Ticket -->
-            <div style="margin-bottom: 14px;">
-                <input type="file" id="ticket-camera-input" accept="image/*" capture="environment" style="display: none;" onchange="handleTicketPhoto(event)">
-                <button class="btn-purple" style="width: 100%;" onclick="document.getElementById('ticket-camera-input').click()">
-                    📷 Tomar Foto al Ticket (Auto-Lectura / Respaldo)
-                </button>
-                <div id="ticket-status" style="font-size: 0.75rem; color: var(--accent-amber); margin-top: 4px; text-align: center;"></div>
+            <div style="margin-bottom:12px;">
+                <input type="file" id="ticket-camera-input" accept="image/*" capture="environment" style="display:none;" onchange="App.handleTicketPhoto(event)">
+                <button class="btn-violet" style="width:100%;" onclick="document.getElementById('ticket-camera-input').click()">📷 Escanear Ticket (IA)</button>
+                <div id="ticket-status" style="font-size:0.75rem;color:var(--cobalt-glow);margin-top:5px;text-align:center;"></div>
             </div>
-
             <div class="btn-grid">
-                <button class="btn-green" onclick="confirmRefuel()">✅ Guardar Recarga</button>
-                <button class="btn-red" onclick="closeRefuelModal()">Cancelar</button>
+                <button class="btn-emerald" onclick="App.confirmRefuel()">✅ Confirmar</button>
+                <button class="btn-obsidian" onclick="App.closeModal('refuel-modal')">Cancelar</button>
             </div>
         </div>
     </div>
 
-    <!-- MODAL 3: Historial de Viajes, Ciclos y Descarga CSV -->
     <div id="history-modal" class="modal">
         <div class="modal-content">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <h3>📊 Bitácora Platina</h3>
-                <button class="btn-red" style="padding: 6px 12px;" onclick="closeHistoryModal()">Cerrar</button>
+            <div class="modal-header">
+                <div class="modal-title">📊 Bitácora Platina</div>
+                <button class="btn-obsidian" style="padding:4px 10px;" onclick="App.closeModal('history-modal')">Cerrar</button>
             </div>
-
             <div class="tabs">
-                <button id="tab-trips-btn" class="tab-btn active" onclick="switchHistoryTab('trips')">🚗 Viajes (<span id="count-trips">0</span>)</button>
-                <button id="tab-cycles-btn" class="tab-btn" onclick="switchHistoryTab('cycles')">⛽ Ciclos Recarga (<span id="count-cycles">0</span>)</button>
+                <button id="tab-trips-btn" class="tab-btn active" onclick="App.switchHistoryTab('trips')">🚗 Viajes (<span id="count-trips">0</span>)</button>
+                <button id="tab-cycles-btn" class="tab-btn" onclick="App.switchHistoryTab('cycles')">⛽ Recargas (<span id="count-cycles">0</span>)</button>
             </div>
-
             <div id="history-trips-view" class="history-list"></div>
-            <div id="history-cycles-view" class="history-list" style="display: none;"></div>
-
+            <div id="history-cycles-view" class="history-list" style="display:none;"></div>
             <div class="btn-grid">
-                <button class="btn-green" onclick="exportCSV('trips')">📥 Excel Viajes (.CSV)</button>
-                <button class="btn-amber" onclick="exportCSV('cycles')">📥 Excel Recargas (.CSV)</button>
+                <button class="btn-cobalt" onclick="App.exportCSV('trips')">📥 CSV Viajes</button>
+                <button class="btn-emerald" onclick="App.exportCSV('cycles')">📥 CSV Recargas</button>
             </div>
         </div>
     </div>
 
-    <!-- MODAL 4: Ajustes -->
     <div id="settings-modal" class="modal">
         <div class="modal-content">
-            <h3 style="margin-bottom: 12px;">⚙️ Configuración Platina 2004</h3>
+            <div class="modal-header">
+                <div class="modal-title">⚙️ Ajustes & Voz IA</div>
+                <button class="btn-obsidian" style="padding:4px 10px;" onclick="App.closeModal('settings-modal')">✕</button>
+            </div>
             <div class="form-group">
-                <label>Rendimiento en Cerro / Ciudad (km/L):</label>
+                <label>Rendimiento (km/L):</label>
                 <input type="number" id="input-efficiency" step="0.5" value="10.0">
             </div>
             <div class="form-group">
-                <label>Ajustar Litros Actuales Manualmente:</label>
+                <label>Calibrar Litros Actuales:</label>
                 <input type="number" id="input-current-fuel" step="0.1" value="50.0">
             </div>
             <div class="form-group">
-                <label>Gemini API Key (Opcional, para leer fotos de tickets con IA):</label>
+                <label>Voz Neuronal Gemini (Requiere API Key y Red):</label>
+                <select id="input-ai-voice">
+                    <option value="Aoede">Aoede (Femenina, Cálida y Moderna)</option>
+                    <option value="Kore">Kore (Femenina, Clara y Ejecutiva)</option>
+                    <option value="Leda">Leda (Femenina, Suave)</option>
+                    <option value="Fenrir">Fenrir (Masculina, Natural)</option>
+                    <option value="local">Solo Voz Local Mejorada (Offline)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Gemini API Key (Para Voz Neuronal y Tickets):</label>
                 <input type="password" id="input-gemini-key" placeholder="AIzaSy...">
             </div>
             <div class="btn-grid">
-                <button class="btn-green" onclick="saveSettings()">Guardar</button>
-                <button class="btn-red" onclick="closeSettings()">Cancelar</button>
+                <button class="btn-emerald" onclick="App.saveSettings()">Guardar</button>
+                <button class="btn-obsidian" onclick="App.closeModal('settings-modal')">Cerrar</button>
             </div>
-            <hr style="border-color: #334155; margin: 12px 0;">
-            <button class="btn-blue" style="width: 100%;" onclick="syncWithFirebase(true)">🔄 Forzar Sincronización con Firebase</button>
+            <button class="btn-cobalt" style="width:100%;margin-top:10px;" onclick="App.syncWithFirebase(true)">🔄 Forzar Sync Firebase</button>
         </div>
     </div>
 
+    <script src="js/app.js"></script>
     <script>
-        // URL oficial de tu Firebase Realtime Database
-        const FIREBASE_URL = "https://platina-dashboard-f92a6-default-rtdb.firebaseio.com/platina_v4.json";
-
-        let state = {
-            tankCapacity: 50.0,
-            currentFuel: 50.0,
-            efficiency: 10.0,
-            refuelOdoKm: 0.0,      // Odómetro por recarga (se reinicia en cada carga)
-            lifetimeOdoKm: 0.0,    // Odómetro histórico total
-            cycleStartDate: new Date().toLocaleDateString('es-MX'),
-            cycleTripsCount: 0,
-            lastUpdated: 0,
-            // Pregunta diaria de recarga
-            lastAskedDate: "",
-            planToRefuelToday: false,
-            // Historiales sincronizados
-            trips: [],             // Lista de viajes con coordenadas y direcciones
-            refuelCycles: [],      // Resumen comparativo por cada recarga
-            geminiApiKey: "",
-            lowFuelAlerted: false,
-            criticalFuelAlerted: false
-        };
-
-        // Variables de sesión de viaje en curso
-        let watchId = null;
-        let lastPos = null;
-        let currentTripKm = 0.0;
-        let currentSpeedKmh = 0;
-        let tripStartCoords = null;
-        let tripEndCoords = null;
-        let tripStartTime = null;
-        let audioCtx = null;
-
-        // 1. INICIALIZACIÓN Y AUDIO
-        function initAudio() {
-            if (!audioCtx) {
-                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-                if (AudioContextClass) audioCtx = new AudioContextClass();
-            }
-            if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js').catch(() => {});
         }
-
-        function playDashboardBeep(type = 'normal') {
-            try {
-                initAudio();
-                if (!audioCtx) return;
-                const now = audioCtx.currentTime;
-                if (type === 'critical') {
-                    [0, 0.22, 0.44].forEach(offset => {
-                        const osc = audioCtx.createOscillator();
-                        const gain = audioCtx.createGain();
-                        osc.type = 'square';
-                        osc.frequency.setValueAtTime(950, now + offset);
-                        gain.gain.setValueAtTime(0.35, now + offset);
-                        gain.gain.exponentialRampToValueAtTime(0.01, now + offset + 0.16);
-                        osc.connect(gain); gain.connect(audioCtx.destination);
-                        osc.start(now + offset); osc.stop(now + offset + 0.17);
-                    });
-                } else {
-                    const osc = audioCtx.createOscillator();
-                    const gain = audioCtx.createGain();
-                    osc.type = 'sine';
-                    osc.frequency.setValueAtTime(660, now);
-                    osc.frequency.setValueAtTime(880, now + 0.15);
-                    gain.gain.setValueAtTime(0.4, now);
-                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.38);
-                    osc.connect(gain); gain.connect(audioCtx.destination);
-                    osc.start(now); osc.stop(now + 0.4);
-                }
-            } catch (e) {}
-        }
-
-        function triggerAlert(text, isCritical = false) {
-            playDashboardBeep(isCritical ? 'critical' : 'normal');
-            if ('speechSynthesis' in window) {
-                try {
-                    window.speechSynthesis.cancel();
-                    const utter = new SpeechSynthesisUtterance(text);
-                    utter.lang = 'es-MX';
-                    utter.rate = 1.0;
-                    setTimeout(() => window.speechSynthesis.speak(utter), 450);
-                } catch (e) {}
-            }
-        }
-
-        function testVoiceAlert() {
-            const range = Math.round(state.currentFuel * state.efficiency);
-            triggerAlert('Tablero Platina activo. Tienes ' + state.currentFuel.toFixed(1) + ' litros. Autonomía de ' + range + ' kilómetros.', false);
-        }
-
-        // 2. CARGA LOCAL Y SINCRONIZACIÓN AUTOMÁTICA CON FIREBASE
-        async function initApp() {
-            const saved = localStorage.getItem('platina_state_v4');
-            if (saved) {
-                try { state = { ...state, ...JSON.parse(saved) }; } catch (e) {}
-            }
-            const savedKey = localStorage.getItem('platina_gemini_key');
-            if (savedKey) state.geminiApiKey = savedKey;
-
-            updateUI();
-            await syncWithFirebase(false);
-            resolvePendingAddresses();
-        }
-
-        function saveLocalState(markTimestamp = true) {
-            if (markTimestamp) state.lastUpdated = Date.now();
-            localStorage.setItem('platina_state_v4', JSON.stringify(state));
-            updateUI();
-        }
-
-        // Fusión inteligente de datos entre iPhone y Huawei vía Firebase
-        async function syncWithFirebase(manual = false) {
-            const cloudEl = document.getElementById('cloud-status');
-            if (!navigator.onLine) {
-                cloudEl.innerText = '📴 Offline (Guardado local)';
-                return;
-            }
-
-            cloudEl.innerText = '🔄 Sincronizando...';
-            try {
-                const res = await fetch(FIREBASE_URL);
-                const remote = await res.json();
-
-                if (!remote) {
-                    // Primera vez: subir estado local a Firebase
-                    await pushToFirebase();
-                } else {
-                    // Unir listas de viajes y ciclos por ID único sin perder ninguno
-                    const mergedTrips = mergeArraysById(state.trips || [], remote.trips || []);
-                    const mergedCycles = mergeArraysById(state.refuelCycles || [], remote.refuelCycles || []);
-
-                    // El estado con el timestamp más reciente manda en los contadores actuales
-                    if ((remote.lastUpdated || 0) > (state.lastUpdated || 0)) {
-                        state = {
-                            ...state,
-                            ...remote,
-                            trips: mergedTrips,
-                            refuelCycles: mergedCycles,
-                            geminiApiKey: state.geminiApiKey || remote.geminiApiKey || ""
-                        };
-                        saveLocalState(false);
-                        if (manual) triggerAlert('Datos actualizados desde la nube.', false);
-                    } else {
-                        state.trips = mergedTrips;
-                        state.refuelCycles = mergedCycles;
-                        await pushToFirebase();
-                    }
-                }
-                cloudEl.innerText = '☁️ Sincronizado';
-                resolvePendingAddresses();
-            } catch (e) {
-                cloudEl.innerText = '⚠️ Error red';
-            }
-        }
-
-        async function pushToFirebase() {
-            if (!navigator.onLine) return;
-            try {
-                await fetch(FIREBASE_URL, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(state)
-                });
-                document.getElementById('cloud-status').innerText = '☁️ Sincronizado';
-            } catch (e) {}
-        }
-
-        function mergeArraysById(arr1, arr2) {
-            const map = new Map();
-            [...arr1, ...arr2].forEach(item => {
-                if (item && item.id) {
-                    // Si uno ya tiene dirección traducida, conservar el que tiene dirección
-                    const existing = map.get(item.id);
-                    if (!existing || (item.addressResolved && !existing.addressResolved)) {
-                        map.set(item.id, item);
-                    }
-                }
-            });
-            return Array.from(map.values()).sort((a, b) => b.id - a.id);
-        }
-
-        window.addEventListener('online', () => {
-            syncWithFirebase(false);
-            resolvePendingAddresses();
-        });
-
-        // 3. GEOCODIFICACIÓN INVERSA (Coordenadas -> Calle y Colonia en segundo plano)
-        async function getAddressFromCoords(lat, lon) {
-            try {
-                const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`;
-                const res = await fetch(url, { headers: { 'Accept-Language': 'es' } });
-                const data = await res.json();
-                if (data && data.address) {
-                    const road = data.address.road || data.address.pedestrian || data.address.suburb || "Calle s/n";
-                    const number = data.address.house_number ? " #" + data.address.house_number : "";
-                    const hood = data.address.neighbourhood || data.address.suburb || data.address.city_district || data.address.town || "";
-                    return `${road}${number}${hood ? ', ' + hood : ''}`;
-                }
-            } catch (e) {}
-            return null;
-        }
-
-        async function resolvePendingAddresses() {
-            if (!navigator.onLine || !state.trips) return;
-            let changed = false;
-            for (let trip of state.trips) {
-                if (!trip.addressResolved && trip.startLat && trip.endLat) {
-                    const startAddr = await getAddressFromCoords(trip.startLat, trip.startLon);
-                    await new Promise(r => setTimeout(r, 1100)); // Respetar límite de Nominatim
-                    const endAddr = await getAddressFromCoords(trip.endLat, trip.endLon);
-                    if (startAddr && endAddr) {
-                        trip.startAddress = startAddr;
-                        trip.endAddress = endAddr;
-                        trip.addressResolved = true;
-                        changed = true;
-                    }
-                }
-            }
-            if (changed) {
-                saveLocalState(true);
-                pushToFirebase();
-            }
-        }
-
-        // 4. PREGUNTA DIARIA Y FLUJO DE VIAJE GPS
-        function handleStartStopClick() {
-            initAudio();
-            if (watchId !== null) {
-                stopTrip();
-                return;
-            }
-
-            const todayStr = new Date().toLocaleDateString('es-MX');
-            if (state.lastAskedDate !== todayStr) {
-                document.getElementById('daily-question-modal').style.display = 'flex';
-            } else {
-                if (state.planToRefuelToday) {
-                    triggerAlert('Recuerda que hoy planeaste recargar gasolina.', false);
-                }
-                startTripGPS();
-            }
-        }
-
-        function answerDailyRefuel(willRefuel) {
-            const todayStr = new Date().toLocaleDateString('es-MX');
-            state.lastAskedDate = todayStr;
-            state.planToRefuelToday = willRefuel;
-            document.getElementById('daily-question-modal').style.display = 'none';
-            saveLocalState(true);
-            pushToFirebase();
-
-            if (willRefuel) {
-                triggerAlert('Perfecto. Te recordaré registrar tus litros en cada viaje de hoy.', false);
-            }
-            startTripGPS();
-        }
-
-        async function startTripGPS() {
-            const btn = document.getElementById('btn-gps-toggle');
-            const dot = document.getElementById('gps-dot');
-            const status = document.getElementById('gps-status');
-
-            if (!navigator.geolocation) {
-                alert('Geolocalización no soportada.');
-                return;
-            }
-            if ('wakeLock' in navigator) {
-                try { await navigator.wakeLock.request('screen'); } catch (e) {}
-            }
-
-            currentTripKm = 0.0;
-            lastPos = null;
-            tripStartCoords = null;
-            tripEndCoords = null;
-            tripStartTime = new Date();
-
-            btn.innerText = '⏹️ Finalizar Viaje';
-            btn.className = 'btn-red';
-            dot.className = 'dot searching';
-            status.innerText = 'GPS: Buscando...';
-            updateUI();
-
-            watchId = navigator.geolocation.watchPosition(
-                (pos) => {
-                    dot.className = 'dot active';
-                    status.innerText = 'GPS: ±' + Math.round(pos.coords.accuracy) + 'm';
-
-                    currentSpeedKmh = (pos.coords.speed !== null && pos.coords.speed >= 0)
-                        ? Math.round(pos.coords.speed * 3.6) : 0;
-
-                    if (!tripStartCoords && pos.coords.accuracy < 65) {
-                        tripStartCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-                    }
-                    tripEndCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-
-                    if (lastPos && pos.coords.accuracy < 45) {
-                        const dist = getDistanceKm(lastPos.latitude, lastPos.longitude, pos.coords.latitude, pos.coords.longitude);
-                        if (dist > 0.008) {
-                            currentTripKm += dist;
-                            state.refuelOdoKm += dist;
-                            state.lifetimeOdoKm += dist;
-                            const fuelUsed = dist / state.efficiency;
-                            state.currentFuel = Math.max(0, state.currentFuel - fuelUsed);
-                            lastPos = pos.coords;
-                            saveLocalState(true);
-                        }
-                    } else if (!lastPos && pos.coords.accuracy < 60) {
-                        lastPos = pos.coords;
-                    }
-
-                    document.getElementById('speed-display').innerText = currentSpeedKmh;
-                    document.getElementById('current-trip-km').innerText = currentTripKm.toFixed(2);
-                },
-                (err) => {
-                    dot.className = 'dot searching';
-                    status.innerText = 'GPS: Buscando señal...';
-                },
-                { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 }
-            );
-        }
-
-        function stopTrip() {
-            navigator.geolocation.clearWatch(watchId);
-            watchId = null;
-            currentSpeedKmh = 0;
-            document.getElementById('speed-display').innerText = '0';
-
-            const btn = document.getElementById('btn-gps-toggle');
-            btn.innerText = '▶️ Iniciar Viaje';
-            btn.className = 'btn-green';
-            document.getElementById('gps-dot').className = 'dot';
-            document.getElementById('gps-status').innerText = 'GPS: Inactivo';
-
-            if (currentTripKm >= 0.02) {
-                const now = new Date();
-                const fuelSpent = currentTripKm / state.efficiency;
-                const newTrip = {
-                    id: Date.now(),
-                    date: now.toLocaleDateString('es-MX'),
-                    startTime: tripStartTime ? tripStartTime.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}) : '',
-                    endTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
-                    km: Number(currentTripKm.toFixed(2)),
-                    fuelUsed: Number(fuelSpent.toFixed(2)),
-                    fuelRemaining: Number(state.currentFuel.toFixed(1)),
-                    startLat: tripStartCoords ? tripStartCoords.lat : null,
-                    startLon: tripStartCoords ? tripStartCoords.lon : null,
-                    endLat: tripEndCoords ? tripEndCoords.lat : null,
-                    endLon: tripEndCoords ? tripEndCoords.lon : null,
-                    startAddress: tripStartCoords ? `${tripStartCoords.lat.toFixed(4)}, ${tripStartCoords.lon.toFixed(4)}` : "Registro GPS",
-                    endAddress: tripEndCoords ? `${tripEndCoords.lat.toFixed(4)}, ${tripEndCoords.lon.toFixed(4)}` : "Registro GPS",
-                    addressResolved: false
-                };
-
-                state.trips.unshift(newTrip);
-                state.cycleTripsCount = (state.cycleTripsCount || 0) + 1;
-            }
-
-            // Reiniciar Viaje Actual a 0.00 km
-            currentTripKm = 0.0;
-            document.getElementById('current-trip-km').innerText = '0.00';
-
-            saveLocalState(true);
-            pushToFirebase();
-            resolvePendingAddresses();
-
-            if (state.planToRefuelToday) {
-                triggerAlert('Viaje finalizado. Recuerda registrar tus litros si ya pasaste a la gasolinera.', false);
-            } else {
-                playDashboardBeep('normal');
-            }
-        }
-
-        function addManualKm() {
-            initAudio();
-            const kmStr = prompt('¿Cuántos kilómetros recorriste en este trayecto?', '5.0');
-            if (kmStr !== null) {
-                const km = parseFloat(kmStr);
-                if (!isNaN(km) && km > 0) {
-                    const fuelSpent = km / state.efficiency;
-                    state.refuelOdoKm += km;
-                    state.lifetimeOdoKm += km;
-                    state.currentFuel = Math.max(0, state.currentFuel - fuelSpent);
-                    state.cycleTripsCount = (state.cycleTripsCount || 0) + 1;
-
-                    const now = new Date();
-                    state.trips.unshift({
-                        id: Date.now(),
-                        date: now.toLocaleDateString('es-MX'),
-                        startTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
-                        endTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
-                        km: Number(km.toFixed(2)),
-                        fuelUsed: Number(fuelSpent.toFixed(2)),
-                        fuelRemaining: Number(state.currentFuel.toFixed(1)),
-                        startAddress: "Ingreso Manual",
-                        endAddress: "Ingreso Manual",
-                        addressResolved: true
-                    });
-
-                    saveLocalState(true);
-                    pushToFirebase();
-                }
-            }
-        }
-
-        // 5. RECARGA DE GASOLINA, CIERRE DE CICLO Y LECTOR DE TICKET
-        function openRefuelModal() {
-            initAudio();
-            document.getElementById('modal-cycle-km').innerText = state.refuelOdoKm.toFixed(1);
-            document.getElementById('input-refuel-liters').value = '';
-            document.getElementById('input-refuel-cost').value = '';
-            document.getElementById('ticket-status').innerText = '';
-            document.getElementById('refuel-modal').style.display = 'flex';
-        }
-
-        function closeRefuelModal() {
-            document.getElementById('refuel-modal').style.display = 'none';
-        }
-
-        function confirmRefuel() {
-            const liters = parseFloat(document.getElementById('input-refuel-liters').value);
-            const cost = parseFloat(document.getElementById('input-refuel-cost').value) || 0;
-
-            if (isNaN(liters) || liters <= 0) {
-                alert('Ingresa una cantidad válida de litros (ej. 10.7 o 26.9).');
-                return;
-            }
-            registerRefuelAndResetCycle(liters, cost, "Carga Manual / Ticket");
-            closeRefuelModal();
-        }
-
-        function fillTankQuick() {
-            initAudio();
-            const needed = Math.max(0, state.tankCapacity - state.currentFuel);
-            if (confirm(`¿Confirmas que llenaste el tanque a 50.0 L?\nSe cerrará el ciclo actual de ${state.refuelOdoKm.toFixed(1)} km.`)) {
-                registerRefuelAndResetCycle(Number(needed.toFixed(1)) || 50.0, 0, "Tanque Lleno (50L)");
-            }
-        }
-
-        function registerRefuelAndResetCycle(litersAdded, costPaid, methodLabel) {
-            const now = new Date();
-            const fuelBefore = state.currentFuel;
-            state.currentFuel = Math.min(state.tankCapacity, state.currentFuel + litersAdded);
-
-            // Guardar el ciclo que se cierra para comparativos
-            const closedCycle = {
-                id: Date.now(),
-                startDate: state.cycleStartDate || now.toLocaleDateString('es-MX'),
-                endDate: now.toLocaleDateString('es-MX') + ' ' + now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
-                kmDriven: Number(state.refuelOdoKm.toFixed(1)),
-                tripsCount: state.cycleTripsCount || 0,
-                fuelBeforeRefuel: Number(fuelBefore.toFixed(1)),
-                litersAdded: Number(litersAdded.toFixed(2)),
-                costPaid: costPaid,
-                method: methodLabel
-            };
-
-            state.refuelCycles.unshift(closedCycle);
-
-            // Reiniciar Odómetro por Recarga y apagar bandera de recordatorio diario
-            state.refuelOdoKm = 0.0;
-            state.cycleTripsCount = 0;
-            state.cycleStartDate = now.toLocaleDateString('es-MX');
-            state.planToRefuelToday = false;
-
-            saveLocalState(true);
-            pushToFirebase();
-            triggerAlert(`Recarga de ${litersAdded.toFixed(1)} litros registrada. Odómetro de recarga reiniciado a cero.`, false);
-        }
-
-        function adjustTrafficFuel() {
-            initAudio();
-            state.currentFuel = Math.max(0, state.currentFuel - 1.0);
-            saveLocalState(true);
-            pushToFirebase();
-            playDashboardBeep('normal');
-        }
-
-        // Lector de Ticket con Gemini Vision (o compresión offline)
-        async function handleTicketPhoto(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const statusEl = document.getElementById('ticket-status');
-
-            if (!navigator.onLine || !state.geminiApiKey) {
-                statusEl.innerText = '📸 Foto registrada. Escribe los litros manualmente arriba (Modo sin IA/Red).';
-                return;
-            }
-
-            statusEl.innerText = '🔍 Analizando ticket con IA...';
-            try {
-                const base64 = await fileToBase64(file);
-                const base64Data = base64.split(',')[1];
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${state.geminiApiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{
-                            parts: [
-                                { text: "Extrae de este ticket de gasolina los litros cargados y el total pagado. Responde SOLO en formato JSON exacto: {\"liters\": 0.00, \"cost\": 0.00}" },
-                                { inline_data: { mime_type: file.type, data: base64Data } }
-                            ]
-                        }]
-                    })
-                });
-                const result = await response.json();
-                const text = result.candidates[0].content.parts[0].text;
-                const match = text.match(/\{[\s\S]*\}/);
-                if (match) {
-                    const parsed = JSON.parse(match[0]);
-                    if (parsed.liters) document.getElementById('input-refuel-liters').value = parsed.liters;
-                    if (parsed.cost) document.getElementById('input-refuel-cost').value = parsed.cost;
-                    statusEl.innerText = `✅ Ticket leído: ${parsed.liters} L ($${parsed.cost})`;
-                } else {
-                    statusEl.innerText = '⚠️ No se distinguieron los números. Ingrésalos manualmente.';
-                }
-            } catch (e) {
-                statusEl.innerText = '⚠️ Error al leer ticket. Ingresa los litros manualmente.';
-            }
-        }
-
-        function fileToBase64(file) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
-        }
-
-        // 6. HISTORIAL Y DESCARGA EXCEL (CSV) CON BLOQUEO EN MOVIMIENTO
-        function openHistoryModal() {
-            if (watchId !== null || currentSpeedKmh > 3) {
-                alert('🛑 Por seguridad, detén el vehículo y finaliza el viaje actual para consultar el historial.');
-                return;
-            }
-            renderHistoryLists();
-            document.getElementById('history-modal').style.display = 'flex';
-        }
-
-        function closeHistoryModal() {
-            document.getElementById('history-modal').style.display = 'none';
-        }
-
-        function switchHistoryTab(tab) {
-            document.getElementById('tab-trips-btn').className = tab === 'trips' ? 'tab-btn active' : 'tab-btn';
-            document.getElementById('tab-cycles-btn').className = tab === 'cycles' ? 'tab-btn active' : 'tab-btn';
-            document.getElementById('history-trips-view').style.display = tab === 'trips' ? 'flex' : 'none';
-            document.getElementById('history-cycles-view').style.display = tab === 'cycles' ? 'flex' : 'none';
-        }
-
-        function renderHistoryLists() {
-            const tripsEl = document.getElementById('history-trips-view');
-            const cyclesEl = document.getElementById('history-cycles-view');
-            document.getElementById('count-trips').innerText = (state.trips || []).length;
-            document.getElementById('count-cycles').innerText = (state.refuelCycles || []).length;
-
-            tripsEl.innerHTML = (state.trips || []).length === 0
-                ? '<p style="text-align:center; color:#94a3b8;">Aún no hay viajes registrados.</p>'
-                : state.trips.map(t => `
-                    <div class="history-item">
-                        <div class="history-item-header">
-                            <span>📅 ${t.date} (${t.startTime} - ${t.endTime})</span>
-                            <span>${t.km} km (-${t.fuelUsed} L)</span>
-                        </div>
-                        <div class="history-address">🟢 <strong>Origen:</strong> ${t.startAddress || 'GPS'}</div>
-                        <div class="history-address">🔴 <strong>Destino:</strong> ${t.endAddress || 'GPS'}</div>
-                    </div>
-                `).join('');
-
-            cyclesEl.innerHTML = (state.refuelCycles || []).length === 0
-                ? '<p style="text-align:center; color:#94a3b8;">Aún no hay cierres de recarga.</p>'
-                : state.refuelCycles.map(c => `
-                    <div class="history-item">
-                        <div class="history-item-header">
-                            <span>⛽ ${c.endDate}</span>
-                            <span style="color:#10b981;">+${c.litersAdded} L ${c.costPaid ? '($'+c.costPaid+')' : ''}</span>
-                        </div>
-                        <div class="history-address">
-                            🛣️ <strong>Recorrido con carga anterior:</strong> ${c.kmDriven} km en ${c.tripsCount} viaje(s)<br>
-                            🛢️ <strong>Reserva antes de cargar:</strong> ${c.fuelBeforeRefuel} L (${c.method})
-                        </div>
-                    </div>
-                `).join('');
-        }
-
-        function exportCSV(type) {
-            let csvContent = "\uFEFF"; // BOM para acentos en Excel
-            let filename = "";
-
-            if (type === 'trips') {
-                csvContent += "Fecha,Hora Inicio,Hora Fin,KM Recorridos,Litros Consumidos,Litros Restantes,Direccion Origen,Direccion Destino\n";
-                (state.trips || []).forEach(t => {
-                    const orig = (t.startAddress || "").replace(/,/g, " ");
-                    const dest = (t.endAddress || "").replace(/,/g, " ");
-                    csvContent += `${t.date},${t.startTime},${t.endTime},${t.km},${t.fuelUsed},${t.fuelRemaining},"${orig}","${dest}"\n`;
-                });
-                filename = `Viajes_Platina_${new Date().toISOString().slice(0,10)}.csv`;
-            } else {
-                csvContent += "Inicio Ciclo,Fecha Recarga,KM Recorridos en Ciclo,Num Viajes,Litros Antes de Cargar,Litros Recargados,Costo Pagado,Metodo\n";
-                (state.refuelCycles || []).forEach(c => {
-                    csvContent += `${c.startDate},${c.endDate},${c.kmDriven},${c.tripsCount},${c.fuelBeforeRefuel},${c.litersAdded},${c.costPaid || 0},"${c.method}"\n`;
-                });
-                filename = `Comparativo_Recargas_Platina_${new Date().toISOString().slice(0,10)}.csv`;
-            }
-
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(blob);
-            link.setAttribute("download", filename);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        }
-
-        // 7. ACTUALIZACIÓN DE UI Y CÁLCULOS
-        function updateUI() {
-            const pct = Math.max(0, Math.min(100, (state.currentFuel / state.tankCapacity) * 100));
-            const range = Math.round(state.currentFuel * state.efficiency);
-
-            document.getElementById('fuel-liters').innerText = state.currentFuel.toFixed(1);
-            document.getElementById('fuel-pct').innerText = Math.round(pct);
-            document.getElementById('fuel-bar').style.width = pct + '%';
-            document.getElementById('range-km').innerText = range;
-            document.getElementById('efficiency-val').innerText = state.efficiency.toFixed(1);
-            document.getElementById('refuel-odo-km').innerText = (state.refuelOdoKm || 0).toFixed(1);
-
-            // Mostrar/Ocultar recordatorio de recarga hoy
-            const remBanner = document.getElementById('refuel-reminder-banner');
-            remBanner.style.display = state.planToRefuelToday ? 'flex' : 'none';
-
-            // Bloquear botón de historial si hay viaje en curso
-            const histBtn = document.getElementById('btn-history');
-            if (watchId !== null) {
-                histBtn.disabled = true;
-                histBtn.innerText = '🔒 Historial (Viaje en curso)';
-            } else {
-                histBtn.disabled = false;
-                histBtn.innerText = '📊 Historial de Viajes y Ciclos';
-            }
-
-            // Alertas de nivel bajo
-            const bar = document.getElementById('fuel-bar');
-            const banner = document.getElementById('alert-banner');
-
-            if (pct <= 15) {
-                bar.style.background = '#ef4444';
-                banner.style.display = 'block';
-                banner.innerText = '🚨 ¡RESERVA CRÍTICA! QUEDAN ' + state.currentFuel.toFixed(1) + ' L (' + range + ' KM)';
-                if (!state.criticalFuelAlerted) {
-                    triggerAlert('Atención. Reserva crítica de combustible. Quedan ' + Math.round(state.currentFuel) + ' litros.', true);
-                    state.criticalFuelAlerted = true;
-                }
-            } else if (pct <= 25) {
-                bar.style.background = '#f59e0b';
-                banner.style.display = 'block';
-                banner.innerText = '⚠️ NIVEL BAJO DE GASOLINA: ' + state.currentFuel.toFixed(1) + ' L RESTANTES';
-                if (!state.lowFuelAlerted) {
-                    triggerAlert('Nivel de gasolina bajo. Quedan aproximadamente ' + Math.round(state.currentFuel) + ' litros.', false);
-                    state.lowFuelAlerted = true;
-                }
-                state.criticalFuelAlerted = false;
-            } else {
-                bar.style.background = '#10b981';
-                banner.style.display = 'none';
-                state.lowFuelAlerted = false;
-                state.criticalFuelAlerted = false;
-            }
-        }
-
-        function getDistanceKm(lat1, lon1, lat2, lon2) {
-            const R = 6371;
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLon = (lon2 - lon1) * Math.PI / 180;
-            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                      Math.sin(dLon/2) * Math.sin(dLon/2);
-            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
-        }
-
-        function openSettings() {
-            document.getElementById('input-efficiency').value = state.efficiency;
-            document.getElementById('input-current-fuel').value = state.currentFuel.toFixed(1);
-            document.getElementById('input-gemini-key').value = state.geminiApiKey || '';
-            document.getElementById('settings-modal').style.display = 'flex';
-        }
-
-        function closeSettings() {
-            document.getElementById('settings-modal').style.display = 'none';
-        }
-
-        function saveSettings() {
-            const eff = parseFloat(document.getElementById('input-efficiency').value);
-            const cur = parseFloat(document.getElementById('input-current-fuel').value);
-            const key = document.getElementById('input-gemini-key').value.trim();
-
-            if (!isNaN(eff) && eff > 0) state.efficiency = eff;
-            if (!isNaN(cur) && cur >= 0) state.currentFuel = Math.min(state.tankCapacity, cur);
-            state.geminiApiKey = key;
-            localStorage.setItem('platina_gemini_key', key);
-
-            saveLocalState(true);
-            pushToFirebase();
-            closeSettings();
-        }
-
-        window.onload = initApp;
     </script>
 </body>
 </html>
