@@ -1,4 +1,6 @@
 const FIREBASE_URL = "https://platina-dashboard-f92a6-default-rtdb.firebaseio.com/platina_v4.json";
+// Recordatorios de Google Tasks. Deben coincidir con CONFIG.FIREBASE_URL en apps-script/Code.gs.
+const REMINDERS_URL = "https://platina-dashboard-f92a6-default-rtdb.firebaseio.com/platina_reminders_BUTx3xqiFLs.json";
 
 const App = {
     state: {
@@ -11,6 +13,7 @@ const App = {
     },
     watchId: null, lastPos: null, currentTripKm: 0.0, currentSpeedKmh: 0,
     tripStartCoords: null, tripEndCoords: null, tripStartTime: null,
+    reminders: { updated: 0, forDate: '', items: [] }, _prefix: '',
 
     async init() {
         const saved = localStorage.getItem('platina_state_v4');
@@ -18,9 +21,11 @@ const App = {
         const savedKey = localStorage.getItem('platina_gemini_key');
         if (savedKey) this.state.geminiApiKey = savedKey;
         this.updateUI();
+        this.loadReminders();
         await this.syncWithFirebase(false);
+        this.pullReminders();
         this.resolvePendingAddresses();
-        window.addEventListener('online', () => { this.syncWithFirebase(false); this.resolvePendingAddresses(); });
+        window.addEventListener('online', () => { this.syncWithFirebase(false); this.pullReminders(); this.resolvePendingAddresses(); });
     },
 
     // ---------- Helpers de interfaz ----------
@@ -53,6 +58,79 @@ const App = {
     testVoiceAlert() {
         const range = Math.round(this.state.currentFuel * this.state.efficiency);
         this.triggerAlert(`Hola Mario. Tienes ${this.state.currentFuel.toFixed(1)} litros en el tanque, para unos ${range} kilómetros de recorrido.`, false);
+    },
+
+    // ---------- Recordatorios (Google Tasks → Apps Script → Firebase → aquí) ----------
+    loadReminders() {
+        try {
+            const r = JSON.parse(localStorage.getItem('platina_reminders') || 'null');
+            if (r && Array.isArray(r.items)) this.reminders = r;
+        } catch (e) {}
+        this.renderReminders();
+    },
+
+    async pullReminders(manual = false) {
+        const st = this.el('reminders-status');
+        const say = t => { if (manual && st) st.innerText = t; };
+        if (!navigator.onLine) return say('Sin conexión: se usan los últimos recordatorios guardados.');
+        say('Descargando…');
+        try {
+            const d = await (await fetch(REMINDERS_URL, { cache: 'no-store' })).json();
+            if (d && Array.isArray(d.items)) {
+                this.reminders = d;
+                localStorage.setItem('platina_reminders', JSON.stringify(d));
+                this.renderReminders();
+                say(`✓ ${d.items.length} recordatorio(s) descargado(s)`);
+            } else say('Aún no hay datos. Ejecuta el script de Google Apps Script (ver LEEME_RECORDATORIOS).');
+        } catch (e) { say('No se pudo descargar. Intenta de nuevo con conexión.'); }
+    },
+
+    renderReminders() {
+        const items = this.reminders.items || [], card = this.el('reminders-card');
+        card.style.display = items.length ? 'block' : 'none';
+        if (!items.length) return;
+        this.el('reminders-count').innerText = items.length;
+        const when = this.reminders.updated ? new Date(this.reminders.updated).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+        this.el('reminders-meta').innerText = when ? `Google Tasks · actualizado ${when}` : 'Google Tasks';
+        this.el('reminders-list').innerHTML = items.slice(0, 8).map(it => `
+            <li><span class="r-dot"></span><div><b>${this.esc(it.title)}</b>${it.notes ? `<span>${this.esc(it.notes)}</span>` : ''}</div></li>`).join('')
+            + (items.length > 8 ? `<li class="more">y ${items.length - 8} más…</li>` : '');
+    },
+
+    buildBriefing() {
+        const items = this.reminders.items || [], n = items.length, h = new Date().getHours();
+        const ord = ['Primero', 'Segundo', 'Tercero', 'Cuarto', 'Quinto', 'Sexto'];
+        const stop = t => { t = String(t || '').replace(/<[^>]*>/g, ' ').replace(/https?:\/\/\S+/g, 'un enlace').replace(/\s+/g, ' ').trim(); return /[.!?…]$/.test(t) ? t : t + '.'; };
+        let t = `${h < 12 ? 'Buen día' : h < 19 ? 'Buenas tardes' : 'Buenas noches'}, Mario. Tienes ${n} ${n === 1 ? 'recordatorio' : 'recordatorios'}. `;
+        items.slice(0, 6).forEach((it, i) => {
+            t += (n === 1 ? '' : ord[i] + ': ') + stop(it.title) + ' ' + (it.notes ? stop(it.notes.slice(0, 140)) + ' ' : '');
+        });
+        if (n > 6) t += `Y ${n - 6} más en pantalla.`;
+        return t.trim();
+    },
+
+    readReminders() {
+        this.initAudio();
+        if (!(this.reminders.items || []).length) return this.triggerAlert('No tienes recordatorios pendientes.', false);
+        this.triggerAlert(this.buildBriefing(), false);
+    },
+
+    // Se lee una vez al día, al primer viaje (hay gesto del usuario, así el navegador permite el audio)
+    briefingWanted() {
+        return Voice.prefs.briefing !== false && (this.reminders.items || []).length > 0
+            && localStorage.getItem('platina_briefing_date') !== new Date().toLocaleDateString('es-MX');
+    },
+    // Si toca leer recordatorios, los avisos cortos se unen a esa lectura para no pisarse
+    say(text) {
+        if (this.briefingWanted()) this._prefix = (this._prefix ? this._prefix + ' ' : '') + text;
+        else this.triggerAlert(text, false);
+    },
+    runBriefing() {
+        if (!this.briefingWanted()) return;
+        localStorage.setItem('platina_briefing_date', new Date().toLocaleDateString('es-MX'));
+        const text = `${this._prefix} ${this.buildBriefing()}`.trim();
+        this._prefix = '';
+        this.triggerAlert(text, false);
     },
 
     // Prueba con los valores del formulario (sin guardar)
@@ -180,7 +258,7 @@ const App = {
         if (this.state.lastAskedDate !== today) {
             document.getElementById('daily-question-modal').style.display = 'flex';
         } else {
-            if (this.state.planToRefuelToday) this.triggerAlert('Recuerda que hoy planeaste recargar gasolina.', false);
+            if (this.state.planToRefuelToday) this.say('Recuerda que hoy planeaste recargar gasolina.');
             this.startTripGPS();
         }
     },
@@ -190,11 +268,12 @@ const App = {
         this.state.planToRefuelToday = val;
         this.closeModal('daily-question-modal');
         this.saveLocalState(true); this.pushToFirebase();
-        if (val) this.triggerAlert('Entendido. Te recordaré registrar los litros.', false);
+        if (val) this.say('Entendido. Te recordaré registrar los litros.');
         this.startTripGPS();
     },
 
     async startTripGPS() {
+        this.runBriefing();
         if (!navigator.geolocation) return alert('GPS no soportado.');
         if ('wakeLock' in navigator) { try { await navigator.wakeLock.request('screen'); } catch (e) {} }
         this.currentTripKm = 0.0; this.lastPos = null; this.tripStartCoords = null; this.tripEndCoords = null; this.tripStartTime = new Date();
@@ -447,6 +526,8 @@ const App = {
         document.getElementById('input-efficiency').value = this.state.efficiency;
         document.getElementById('input-current-fuel').value = this.state.currentFuel.toFixed(1);
         this.fillVoiceSettings();
+        this.el('input-briefing').checked = Voice.prefs.briefing !== false;
+        this.el('reminders-status').innerText = '';
         document.getElementById('input-gemini-key').value = this.state.geminiApiKey || '';
         document.getElementById('settings-modal').style.display = 'flex';
     },
@@ -457,7 +538,7 @@ const App = {
         if (!isNaN(eff) && eff > 0) this.state.efficiency = eff;
         if (!isNaN(cur) && cur >= 0) this.state.currentFuel = Math.min(this.state.tankCapacity, cur);
         this.state.aiVoice = document.getElementById('input-ai-voice').value;
-        Voice.savePrefs({ localVoice: document.getElementById('input-local-voice').value, rate: parseFloat(document.getElementById('input-voice-rate').value) || 1 });
+        Voice.savePrefs({ briefing: document.getElementById('input-briefing').checked, localVoice: document.getElementById('input-local-voice').value, rate: parseFloat(document.getElementById('input-voice-rate').value) || 1 });
         this.state.geminiApiKey = document.getElementById('input-gemini-key').value.trim();
         localStorage.setItem('platina_gemini_key', this.state.geminiApiKey);
         this.saveLocalState(true); this.pushToFirebase();
