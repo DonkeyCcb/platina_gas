@@ -11,7 +11,7 @@ const App = {
         lowFuelAlerted: false, criticalFuelAlerted: false
     },
     watchId: null, lastPos: null, currentTripKm: 0.0, currentSpeedKmh: 0,
-    tripStartCoords: null, tripEndCoords: null, tripStartTime: null, audioCtx: null,
+    tripStartCoords: null, tripEndCoords: null, tripStartTime: null,
     playlist: [], currentTrackIdx: 0, userVolume: 0.85, weatherSummary: "",
 
     async init() {
@@ -36,7 +36,6 @@ const App = {
         });
     },
 
-    // 1. RELOJ EN VIVO Y HOY NO CIRCULA (CDMX / EDOMEX)
     startClock() {
         const tick = () => {
             const now = new Date();
@@ -55,7 +54,7 @@ const App = {
             badge.className = "pill-badge hnc-ok"; badge.innerText = "🟢 Exento (0)"; return;
         }
         const now = new Date();
-        const day = now.getDay(); // 0 Dom, 1 Lun ... 6 Sab
+        const day = now.getDay();
         const d = parseInt(this.state.plateDigit || "5");
         let restricted = false;
 
@@ -73,17 +72,10 @@ const App = {
                 if (!isOdd && (weekOfMonth === 2 || weekOfMonth === 4)) restricted = true;
             }
         }
-
-        if (restricted) {
-            badge.className = "pill-badge hnc-warn";
-            badge.innerText = "⛔ Hoy No Circula";
-        } else {
-            badge.className = "pill-badge hnc-ok";
-            badge.innerText = "🟢 Circula Libre";
-        }
+        badge.className = restricted ? "pill-badge hnc-warn" : "pill-badge hnc-ok";
+        badge.innerText = restricted ? "⛔ Hoy No Circula" : "🟢 Circula Libre";
     },
 
-    // 2. CLIMA DE RUTA (Open-Meteo sin API Key)
     async checkWeather(speak = false) {
         if (!navigator.onLine) return;
         try {
@@ -95,13 +87,12 @@ const App = {
                 const temp = Math.round(data.current.temperature_2m);
                 const rain = data.current.precipitation_probability || 0;
                 document.getElementById('weather-badge').innerText = `${rain > 40 ? '🌧️' : '🌡️'} ${temp}°C (${rain}%)`;
-                this.weatherSummary = `La temperatura actual es de ${temp} grados, con ${rain} por ciento de probabilidad de lluvia.`;
+                this.weatherSummary = `La temperatura es de ${temp} grados, con ${rain} por ciento de probabilidad de lluvia.`;
                 if (speak) this.triggerAlert(this.weatherSummary, false);
             }
         } catch (e) {}
     },
 
-    // 3. DOCK MULTIMEDIA (FINAMP / AMAZON / REPRODUCTOR CON AUDIO DUCKING)
     setupAudioPlayer() {
         const audio = document.getElementById('cockpit-audio');
         audio.volume = this.userVolume;
@@ -170,106 +161,14 @@ const App = {
     launchExternalAudio(app) {
         const isAndroid = /Android/i.test(navigator.userAgent);
         if (app === 'amazon') {
-            window.location.href = isAndroid
-                ? "intent://#Intent;package=com.amazon.mp3;end"
-                : "amznmp3://";
+            window.location.href = isAndroid ? "intent://#Intent;package=com.amazon.mp3;end" : "amznmp3://";
         } else if (app === 'finamp') {
-            window.location.href = isAndroid
-                ? "intent://#Intent;package=com.unicornsonlsd.finamp;end"
-                : "finamp://";
+            window.location.href = isAndroid ? "intent://#Intent;package=com.unicornsonlsd.finamp;end" : "finamp://";
         }
     },
 
-    // 4. VOZ NEURONAL EXPRESIVA CON AUDIO DUCKING E INDICADOR
-    initAudio() {
-        if (!this.audioCtx) {
-            const Ctx = window.AudioContext || window.webkitAudioContext;
-            if (Ctx) this.audioCtx = new Ctx();
-        }
-        if (this.audioCtx && this.audioCtx.state === 'suspended') this.audioCtx.resume();
-    },
-
-    playBeep(type = 'normal') {
-        try {
-            this.initAudio();
-            if (!this.audioCtx) return;
-            const now = this.audioCtx.currentTime;
-            const freqs = type === 'critical' ? [950, 950, 950] : [587.33, 880];
-            freqs.forEach((f, i) => {
-                const osc = this.audioCtx.createOscillator();
-                const gain = this.audioCtx.createGain();
-                osc.type = type === 'critical' ? 'square' : 'sine';
-                osc.frequency.setValueAtTime(f, now + i * 0.16);
-                gain.gain.setValueAtTime(0.25, now + i * 0.16);
-                gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.16 + 0.14);
-                osc.connect(gain); gain.connect(this.audioCtx.destination);
-                osc.start(now + i * 0.16); osc.stop(now + i * 0.16 + 0.15);
-            });
-        } catch (e) {}
-    },
-
-    async triggerAlert(text, isCritical = false) {
-        const vBadge = document.getElementById('voice-engine-badge');
-        this.duckMusic(true);
-        this.playBeep(isCritical ? 'critical' : 'normal');
-
-        if (navigator.onLine && this.state.geminiApiKey && this.state.aiVoice !== 'local') {
-            try {
-                if (vBadge) vBadge.innerText = `🎙️ IA: ${this.state.aiVoice}...`;
-                const directorPrompt = `Actúa como una copiloto de cabina moderna, cálida, expresiva y carismática de México. Usa entonación conversacional muy natural, ritmo fluido y cero tono robótico para decir exactamente esto: "${text}"`;
-
-                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${this.state.geminiApiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: directorPrompt }] }],
-                        generationConfig: {
-                            responseModalities: ["AUDIO"],
-                            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.state.aiVoice || "Aoede" } } }
-                        }
-                    })
-                });
-                const data = await res.json();
-                const pcmBase64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-                if (pcmBase64) {
-                    if (vBadge) vBadge.innerText = `🎙️ IA Neural (${this.state.aiVoice})`;
-                    this.playPcmAudio(pcmBase64, 24000);
-                    return;
-                }
-            } catch (e) {}
-        }
-
-        if (vBadge) vBadge.innerText = !this.state.geminiApiKey ? `🔊 Local (Falta API Key)` : `🔊 Voz Local`;
-        this.speakLocalEnhanced(text);
-    },
-
-    playPcmAudio(base64, sampleRate = 24000) {
-        this.initAudio();
-        const binary = atob(base64);
-        const len = binary.length / 2;
-        const buffer = this.audioCtx.createBuffer(1, len, sampleRate);
-        const channel = buffer.getChannelData(0);
-        const view = new DataView(new ArrayBuffer(binary.length));
-        for (let i = 0; i < binary.length; i++) view.setUint8(i, binary.charCodeAt(i));
-        for (let i = 0; i < len; i++) channel[i] = view.getInt16(i * 2, true) / 32768;
-        const source = this.audioCtx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(this.audioCtx.destination);
-        source.onended = () => this.duckMusic(false);
-        source.start();
-    },
-
-    speakLocalEnhanced(text) {
-        if (!('speechSynthesis' in window)) { this.duckMusic(false); return; }
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(text);
-        const voices = window.speechSynthesis.getVoices();
-        const preferred = voices.find(v => v.lang.includes('es') && /Natural|Online|Paulina|Monica|Sabina|Google español/i.test(v.name))
-                       || voices.find(v => v.lang === 'es-MX') || voices.find(v => v.lang.startsWith('es'));
-        if (preferred) utter.voice = preferred;
-        utter.lang = 'es-MX'; utter.rate = 1.04; utter.pitch = 1.05;
-        utter.onend = () => this.duckMusic(false);
-        setTimeout(() => window.speechSynthesis.speak(utter), 350);
+    triggerAlert(text, isCritical = false) {
+        VoiceEngine.speak(text, isCritical, this.state, () => this.duckMusic(true), () => this.duckMusic(false));
     },
 
     testVoiceAlert() {
@@ -278,9 +177,8 @@ const App = {
         this.triggerAlert(msg, false);
     },
 
-    // 5. VIAJE MANUAL CON CÁLCULO DE RUTA (ORIGEN -> DESTINO) Y CONFIRMACIÓN
     openManualTripModal() {
-        this.initAudio();
+        VoiceEngine.initAudio();
         document.getElementById('manual-start-input').value = '';
         document.getElementById('manual-end-input').value = '';
         document.getElementById('manual-km-input').value = '';
@@ -294,29 +192,18 @@ const App = {
         const btn = document.getElementById('btn-calc-route');
 
         if (!startText || !endText) return alert('Escribe tanto el punto de inicio como el de destino.');
-        if (!navigator.onLine) return alert('Sin conexión para buscar calles. Ingresa los kilómetros directamente abajo.');
+        if (!navigator.onLine) return alert('Sin conexión. Ingresa los kilómetros directamente abajo.');
 
         btn.innerText = '🔍 Calculando ruta por calle...';
         try {
-            const [sCoord, eCoord] = await Promise.all([
-                this.searchPlaceCoords(startText),
-                this.searchPlaceCoords(endText)
-            ]);
+            const [sCoord, eCoord] = await Promise.all([this.searchPlaceCoords(startText), this.searchPlaceCoords(endText)]);
             if (!sCoord || !eCoord) {
                 btn.innerText = '📐 Calcular Kilometraje Automáticamente';
-                return alert('No encontré uno de los puntos. Intenta agregar el municipio o ciudad (ej. Tlalnepantla, CDMX).');
+                return alert('No encontré uno de los puntos. Intenta agregar el municipio (ej. Tlalnepantla, CDMX).');
             }
-
-            // Motor de rutas reales por calle OSRM
             const routeRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${sCoord.lon},${sCoord.lat};${eCoord.lon},${eCoord.lat}?overview=false`);
             const routeData = await routeRes.json();
-
-            let km = 0;
-            if (routeData?.routes?.[0]?.distance) {
-                km = routeData.routes[0].distance / 1000;
-            } else {
-                km = this.haversine(sCoord.lat, sCoord.lon, eCoord.lat, eCoord.lon) * 1.3;
-            }
+            const km = routeData?.routes?.[0]?.distance ? (routeData.routes[0].distance / 1000) : (this.haversine(sCoord.lat, sCoord.lon, eCoord.lat, eCoord.lon) * 1.3);
 
             document.getElementById('manual-km-input').value = km.toFixed(2);
             this.updateManualPreview();
@@ -344,7 +231,7 @@ const App = {
 
     confirmManualTrip() {
         const km = parseFloat(document.getElementById('manual-km-input').value);
-        if (isNaN(km) || km <= 0) return alert('Verifica que los kilómetros sean mayores a 0 antes de confirmar.');
+        if (isNaN(km) || km <= 0) return alert('Verifica que los kilómetros sean mayores a 0.');
 
         const startAddr = document.getElementById('manual-start-input').value.trim() || "Registro Manual";
         const endAddr = document.getElementById('manual-end-input').value.trim() || "Registro Manual";
@@ -373,22 +260,16 @@ const App = {
         this.triggerAlert(`Viaje de ${km.toFixed(1)} kilómetros registrado correctamente.`, false);
     },
 
-    // 6. UTILIDADES DE CABINA (HUD & ESTACIONAMIENTO)
-    toggleHudMode() {
-        document.body.classList.toggle('hud-mirror');
-    },
+    toggleHudMode() { document.body.classList.toggle('hud-mirror'); },
 
     openParkedCarLocation() {
-        if (!this.state.parkedCoords?.lat) {
-            return alert('Aún no hay ubicación de estacionamiento guardada. Se guarda automáticamente al finalizar un viaje con GPS.');
-        }
+        if (!this.state.parkedCoords?.lat) return alert('Se guardará automáticamente al finalizar un viaje con GPS.');
         const { lat, lon, time } = this.state.parkedCoords;
-        if (confirm(`Último estacionamiento guardado (${time || 'Reciente'}).\n¿Abrir ruta caminando hacia el Platina en Google Maps?`)) {
+        if (confirm(`Último estacionamiento (${time || 'Reciente'}).\n¿Abrir ruta caminando en Google Maps?`)) {
             window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking`, '_blank');
         }
     },
 
-    // 7. FIREBASE & GPS TRACKING
     saveLocalState(mark = true) {
         if (mark) this.state.lastUpdated = Date.now();
         localStorage.setItem('platina_state_v4', JSON.stringify(this.state));
@@ -466,7 +347,7 @@ const App = {
     },
 
     handleStartStopClick() {
-        this.initAudio();
+        VoiceEngine.initAudio();
         if (this.watchId !== null) { this.stopTrip(); return; }
         const today = new Date().toLocaleDateString('es-MX');
         if (this.state.lastAskedDate !== today) {
@@ -551,8 +432,8 @@ const App = {
         this.currentTripKm = 0.0;
         document.getElementById('current-trip-km').innerText = '0.00';
         this.saveLocalState(true); this.pushToFirebase(); this.resolvePendingAddresses();
-        if (this.state.planToRefuelToday) this.triggerAlert('Viaje finalizado y ubicación guardada. No olvides registrar tus litros si recargaste.', false);
-        else this.playBeep('normal');
+        if (this.state.planToRefuelToday) this.triggerAlert('Viaje finalizado. No olvides registrar tus litros si recargaste.', false);
+        else VoiceEngine.playBeep('normal');
     },
 
     openRefuelModal() {
@@ -596,7 +477,7 @@ const App = {
 
     adjustTrafficFuel() {
         this.state.currentFuel = Math.max(0, this.state.currentFuel - 1.0);
-        this.saveLocalState(true); this.pushToFirebase(); this.playBeep('normal');
+        this.saveLocalState(true); this.pushToFirebase(); VoiceEngine.playBeep('normal');
     },
 
     async handleTicketPhoto(e) {
@@ -696,7 +577,6 @@ const App = {
 
         this.evaluateHoyNoCircula();
 
-        // Calcular Costo por KM
         const paidCycles = (this.state.refuelCycles || []).filter(c => c.costPaid > 0 && c.kmDriven > 0);
         if (paidCycles.length > 0) {
             const totalCost = paidCycles.reduce((s, c) => s + c.costPaid, 0);
