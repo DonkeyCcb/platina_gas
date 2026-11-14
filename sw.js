@@ -1,5 +1,5 @@
-const CACHE = 'platina-v7';
-const ASSETS = ['./', './index.html', './css/tablero.css', './css/recarga.css', './css/bitacora.css', './js/app.js'];
+const CACHE = 'platina-v7-1';
+const ASSETS = ['./', './index.html', './css/aero-cobalt.css', './js/voice.js', './js/app.js'];
 
 self.addEventListener('install', e => {
     self.skipWaiting();
