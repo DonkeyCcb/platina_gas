@@ -1,6 +1,4 @@
 const FIREBASE_URL = "https://platina-dashboard-f92a6-default-rtdb.firebaseio.com/platina_v4.json";
-// Recordatorios de Google Tasks. Deben coincidir con CONFIG.FIREBASE_URL en apps-script/Code.gs.
-const REMINDERS_URL = "https://platina-dashboard-f92a6-default-rtdb.firebaseio.com/platina_reminders_BUTx3xqiFLs.json";
 
 const App = {
     state: {
@@ -9,170 +7,388 @@ const App = {
         cycleStartDate: new Date().toLocaleDateString('es-MX'), cycleTripsCount: 0,
         lastUpdated: 0, lastAskedDate: "", planToRefuelToday: false,
         trips: [], refuelCycles: [], geminiApiKey: "", aiVoice: "Aoede",
+        plateDigit: "5", hologram: "1", parkedCoords: null, streamUrl: "",
         lowFuelAlerted: false, criticalFuelAlerted: false
     },
     watchId: null, lastPos: null, currentTripKm: 0.0, currentSpeedKmh: 0,
-    tripStartCoords: null, tripEndCoords: null, tripStartTime: null,
-    reminders: { updated: 0, forDate: '', items: [] }, _prefix: '',
+    tripStartCoords: null, tripEndCoords: null, tripStartTime: null, audioCtx: null,
+    playlist: [], currentTrackIdx: 0, userVolume: 0.85, weatherSummary: "",
 
     async init() {
         const saved = localStorage.getItem('platina_state_v4');
         if (saved) { try { this.state = { ...this.state, ...JSON.parse(saved) }; } catch (e) {} }
         const savedKey = localStorage.getItem('platina_gemini_key');
         if (savedKey) this.state.geminiApiKey = savedKey;
+
+        this.startClock();
+        this.setupAudioPlayer();
+        if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+
         this.updateUI();
-        this.loadReminders();
         await this.syncWithFirebase(false);
-        this.pullReminders();
         this.resolvePendingAddresses();
-        window.addEventListener('online', () => { this.syncWithFirebase(false); this.pullReminders(); this.resolvePendingAddresses(); });
+        this.checkWeather(false);
+
+        window.addEventListener('online', () => {
+            this.syncWithFirebase(false);
+            this.resolvePendingAddresses();
+            this.checkWeather(false);
+        });
     },
 
-    // ---------- Helpers de interfaz ----------
-    ico(name, cls = '') { return `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`; },
-    esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
-    el(id) { return document.getElementById(id); },
-
-    setCloud(state, label) {
-        const icons = { online: 'cloud', sync: 'sync', offline: 'cloud-off', error: 'alert' };
-        this.el('cloud-pill').dataset.state = state;
-        this.el('cloud-status').innerText = label;
-        this.el('cloud-icon').setAttribute('href', '#i-' + (icons[state] || 'cloud'));
+    // 1. RELOJ EN VIVO Y HOY NO CIRCULA (CDMX / EDOMEX)
+    startClock() {
+        const tick = () => {
+            const now = new Date();
+            document.getElementById('clock-time').innerText = now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+            const opts = { weekday: 'short', day: '2-digit', month: 'short' };
+            document.getElementById('clock-date').innerText = now.toLocaleDateString('es-MX', opts).toUpperCase();
+        };
+        tick();
+        setInterval(tick, 1000);
     },
 
-    setTripButton(running) {
-        const b = this.el('btn-gps-toggle');
-        b.className = 'btn btn-lg ' + (running ? 'btn-danger' : 'btn-primary');
-        b.innerHTML = this.ico(running ? 'stop' : 'play') + `<span>${running ? 'Finalizar' : 'Iniciar Viaje'}</span>`;
+    evaluateHoyNoCircula() {
+        const badge = document.getElementById('hnc-badge');
+        if (!badge) return;
+        if (this.state.hologram === "0") {
+            badge.className = "pill-badge hnc-ok"; badge.innerText = "🟢 Exento (0)"; return;
+        }
+        const now = new Date();
+        const day = now.getDay(); // 0 Dom, 1 Lun ... 6 Sab
+        const d = parseInt(this.state.plateDigit || "5");
+        let restricted = false;
+
+        if (day === 1 && (d === 5 || d === 6)) restricted = true;
+        if (day === 2 && (d === 7 || d === 8)) restricted = true;
+        if (day === 3 && (d === 3 || d === 4)) restricted = true;
+        if (day === 4 && (d === 1 || d === 2)) restricted = true;
+        if (day === 5 && (d === 9 || d === 0)) restricted = true;
+        if (day === 6) {
+            const weekOfMonth = Math.ceil(now.getDate() / 7);
+            if (this.state.hologram === "2") restricted = true;
+            else if (this.state.hologram === "1") {
+                const isOdd = d % 2 !== 0;
+                if (isOdd && (weekOfMonth === 1 || weekOfMonth === 3)) restricted = true;
+                if (!isOdd && (weekOfMonth === 2 || weekOfMonth === 4)) restricted = true;
+            }
+        }
+
+        if (restricted) {
+            badge.className = "pill-badge hnc-warn";
+            badge.innerText = "⛔ Hoy No Circula";
+        } else {
+            badge.className = "pill-badge hnc-ok";
+            badge.innerText = "🟢 Circula Libre";
+        }
     },
 
-    // ---------- Audio y voz (ver js/voice.js) ----------
-    initAudio() { Voice.unlock(); },
-    playBeep(type = 'normal') { Voice.beep(type); },
-
-    voiceOpts(isCritical = false) {
-        return { critical: isCritical, apiKey: this.state.geminiApiKey, geminiVoice: this.state.aiVoice || 'Aoede' };
+    // 2. CLIMA DE RUTA (Open-Meteo sin API Key)
+    async checkWeather(speak = false) {
+        if (!navigator.onLine) return;
+        try {
+            const lat = this.state.parkedCoords?.lat || 19.54;
+            const lon = this.state.parkedCoords?.lon || -99.19;
+            const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation_probability&timezone=auto`);
+            const data = await res.json();
+            if (data?.current) {
+                const temp = Math.round(data.current.temperature_2m);
+                const rain = data.current.precipitation_probability || 0;
+                document.getElementById('weather-badge').innerText = `${rain > 40 ? '🌧️' : '🌡️'} ${temp}°C (${rain}%)`;
+                this.weatherSummary = `La temperatura actual es de ${temp} grados, con ${rain} por ciento de probabilidad de lluvia.`;
+                if (speak) this.triggerAlert(this.weatherSummary, false);
+            }
+        } catch (e) {}
     },
-    triggerAlert(text, isCritical = false) { return Voice.speak(text, this.voiceOpts(isCritical)); },
+
+    // 3. DOCK MULTIMEDIA (FINAMP / AMAZON / REPRODUCTOR CON AUDIO DUCKING)
+    setupAudioPlayer() {
+        const audio = document.getElementById('cockpit-audio');
+        audio.volume = this.userVolume;
+        audio.addEventListener('ended', () => this.nextTrack());
+    },
+
+    loadLocalMusicFiles(e) {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        this.playlist = files.map(f => ({ name: f.name.replace(/\.[^/.]+$/, ""), url: URL.createObjectURL(f) }));
+        this.currentTrackIdx = 0;
+        this.playCurrentTrack();
+    },
+
+    playCurrentTrack() {
+        const audio = document.getElementById('cockpit-audio');
+        if (!this.playlist.length && this.state.streamUrl) {
+            audio.src = this.state.streamUrl;
+            document.getElementById('media-track-title').innerText = "Streaming: Finamp / Navidrome";
+            audio.play().catch(() => {});
+            document.getElementById('btn-play-pause').innerText = "⏸";
+            return;
+        }
+        if (!this.playlist.length) return;
+        const track = this.playlist[this.currentTrackIdx];
+        audio.src = track.url;
+        document.getElementById('media-track-title').innerText = track.name;
+        audio.play().catch(() => {});
+        document.getElementById('btn-play-pause').innerText = "⏸";
+    },
+
+    togglePlayPause() {
+        const audio = document.getElementById('cockpit-audio');
+        if (!audio.src) {
+            if (this.state.streamUrl) { this.playCurrentTrack(); return; }
+            document.getElementById('local-music-input').click();
+            return;
+        }
+        if (audio.paused) { audio.play(); document.getElementById('btn-play-pause').innerText = "⏸"; }
+        else { audio.pause(); document.getElementById('btn-play-pause').innerText = "▶"; }
+    },
+
+    nextTrack() {
+        if (!this.playlist.length) return;
+        this.currentTrackIdx = (this.currentTrackIdx + 1) % this.playlist.length;
+        this.playCurrentTrack();
+    },
+
+    prevTrack() {
+        if (!this.playlist.length) return;
+        this.currentTrackIdx = (this.currentTrackIdx - 1 + this.playlist.length) % this.playlist.length;
+        this.playCurrentTrack();
+    },
+
+    setVolume(val) {
+        this.userVolume = parseFloat(val);
+        document.getElementById('cockpit-audio').volume = this.userVolume;
+    },
+
+    duckMusic(duck = true) {
+        const audio = document.getElementById('cockpit-audio');
+        if (!audio || audio.paused) return;
+        audio.volume = duck ? Math.min(0.18, this.userVolume * 0.25) : this.userVolume;
+    },
+
+    launchExternalAudio(app) {
+        const isAndroid = /Android/i.test(navigator.userAgent);
+        if (app === 'amazon') {
+            window.location.href = isAndroid
+                ? "intent://#Intent;package=com.amazon.mp3;end"
+                : "amznmp3://";
+        } else if (app === 'finamp') {
+            window.location.href = isAndroid
+                ? "intent://#Intent;package=com.unicornsonlsd.finamp;end"
+                : "finamp://";
+        }
+    },
+
+    // 4. VOZ NEURONAL EXPRESIVA CON AUDIO DUCKING E INDICADOR
+    initAudio() {
+        if (!this.audioCtx) {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (Ctx) this.audioCtx = new Ctx();
+        }
+        if (this.audioCtx && this.audioCtx.state === 'suspended') this.audioCtx.resume();
+    },
+
+    playBeep(type = 'normal') {
+        try {
+            this.initAudio();
+            if (!this.audioCtx) return;
+            const now = this.audioCtx.currentTime;
+            const freqs = type === 'critical' ? [950, 950, 950] : [587.33, 880];
+            freqs.forEach((f, i) => {
+                const osc = this.audioCtx.createOscillator();
+                const gain = this.audioCtx.createGain();
+                osc.type = type === 'critical' ? 'square' : 'sine';
+                osc.frequency.setValueAtTime(f, now + i * 0.16);
+                gain.gain.setValueAtTime(0.25, now + i * 0.16);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.16 + 0.14);
+                osc.connect(gain); gain.connect(this.audioCtx.destination);
+                osc.start(now + i * 0.16); osc.stop(now + i * 0.16 + 0.15);
+            });
+        } catch (e) {}
+    },
+
+    async triggerAlert(text, isCritical = false) {
+        const vBadge = document.getElementById('voice-engine-badge');
+        this.duckMusic(true);
+        this.playBeep(isCritical ? 'critical' : 'normal');
+
+        if (navigator.onLine && this.state.geminiApiKey && this.state.aiVoice !== 'local') {
+            try {
+                if (vBadge) vBadge.innerText = `🎙️ IA: ${this.state.aiVoice}...`;
+                const directorPrompt = `Actúa como una copiloto de cabina moderna, cálida, expresiva y carismática de México. Usa entonación conversacional muy natural, ritmo fluido y cero tono robótico para decir exactamente esto: "${text}"`;
+
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${this.state.geminiApiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: directorPrompt }] }],
+                        generationConfig: {
+                            responseModalities: ["AUDIO"],
+                            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.state.aiVoice || "Aoede" } } }
+                        }
+                    })
+                });
+                const data = await res.json();
+                const pcmBase64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+                if (pcmBase64) {
+                    if (vBadge) vBadge.innerText = `🎙️ IA Neural (${this.state.aiVoice})`;
+                    this.playPcmAudio(pcmBase64, 24000);
+                    return;
+                }
+            } catch (e) {}
+        }
+
+        if (vBadge) vBadge.innerText = !this.state.geminiApiKey ? `🔊 Local (Falta API Key)` : `🔊 Voz Local`;
+        this.speakLocalEnhanced(text);
+    },
+
+    playPcmAudio(base64, sampleRate = 24000) {
+        this.initAudio();
+        const binary = atob(base64);
+        const len = binary.length / 2;
+        const buffer = this.audioCtx.createBuffer(1, len, sampleRate);
+        const channel = buffer.getChannelData(0);
+        const view = new DataView(new ArrayBuffer(binary.length));
+        for (let i = 0; i < binary.length; i++) view.setUint8(i, binary.charCodeAt(i));
+        for (let i = 0; i < len; i++) channel[i] = view.getInt16(i * 2, true) / 32768;
+        const source = this.audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this.audioCtx.destination);
+        source.onended = () => this.duckMusic(false);
+        source.start();
+    },
+
+    speakLocalEnhanced(text) {
+        if (!('speechSynthesis' in window)) { this.duckMusic(false); return; }
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(text);
+        const voices = window.speechSynthesis.getVoices();
+        const preferred = voices.find(v => v.lang.includes('es') && /Natural|Online|Paulina|Monica|Sabina|Google español/i.test(v.name))
+                       || voices.find(v => v.lang === 'es-MX') || voices.find(v => v.lang.startsWith('es'));
+        if (preferred) utter.voice = preferred;
+        utter.lang = 'es-MX'; utter.rate = 1.04; utter.pitch = 1.05;
+        utter.onend = () => this.duckMusic(false);
+        setTimeout(() => window.speechSynthesis.speak(utter), 350);
+    },
 
     testVoiceAlert() {
         const range = Math.round(this.state.currentFuel * this.state.efficiency);
-        this.triggerAlert(`Hola Mario. Tienes ${this.state.currentFuel.toFixed(1)} litros en el tanque, para unos ${range} kilómetros de recorrido.`, false);
+        const msg = `¡Todo listo en cabina, Mario! Traemos ${this.state.currentFuel.toFixed(1)} litros en el tanque, suficientes para unos ${range} kilómetros. ${this.weatherSummary || '¡Buen viaje!'}`;
+        this.triggerAlert(msg, false);
     },
 
-    // ---------- Recordatorios (Google Tasks → Apps Script → Firebase → aquí) ----------
-    loadReminders() {
-        try {
-            const r = JSON.parse(localStorage.getItem('platina_reminders') || 'null');
-            if (r && Array.isArray(r.items)) this.reminders = r;
-        } catch (e) {}
-        this.renderReminders();
-    },
-
-    async pullReminders(manual = false) {
-        const st = this.el('reminders-status');
-        const say = t => { if (manual && st) st.innerText = t; };
-        if (!navigator.onLine) return say('Sin conexión: se usan los últimos recordatorios guardados.');
-        say('Descargando…');
-        try {
-            const d = await (await fetch(REMINDERS_URL, { cache: 'no-store' })).json();
-            if (d && Array.isArray(d.items)) {
-                this.reminders = d;
-                localStorage.setItem('platina_reminders', JSON.stringify(d));
-                this.renderReminders();
-                say(`✓ ${d.items.length} recordatorio(s) descargado(s)`);
-            } else say('Aún no hay datos. Ejecuta el script de Google Apps Script (ver LEEME_RECORDATORIOS).');
-        } catch (e) { say('No se pudo descargar. Intenta de nuevo con conexión.'); }
-    },
-
-    renderReminders() {
-        const items = this.reminders.items || [], card = this.el('reminders-card');
-        card.style.display = items.length ? 'block' : 'none';
-        if (!items.length) return;
-        this.el('reminders-count').innerText = items.length;
-        const when = this.reminders.updated ? new Date(this.reminders.updated).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
-        this.el('reminders-meta').innerText = when ? `Google Tasks · actualizado ${when}` : 'Google Tasks';
-        this.el('reminders-list').innerHTML = items.slice(0, 8).map(it => `
-            <li><span class="r-dot"></span><div><b>${this.esc(it.title)}</b>${it.notes ? `<span>${this.esc(it.notes)}</span>` : ''}</div></li>`).join('')
-            + (items.length > 8 ? `<li class="more">y ${items.length - 8} más…</li>` : '');
-    },
-
-    buildBriefing() {
-        const items = this.reminders.items || [], n = items.length, h = new Date().getHours();
-        const ord = ['Primero', 'Segundo', 'Tercero', 'Cuarto', 'Quinto', 'Sexto'];
-        const stop = t => { t = String(t || '').replace(/<[^>]*>/g, ' ').replace(/https?:\/\/\S+/g, 'un enlace').replace(/\s+/g, ' ').trim(); return /[.!?…]$/.test(t) ? t : t + '.'; };
-        let t = `${h < 12 ? 'Buen día' : h < 19 ? 'Buenas tardes' : 'Buenas noches'}, Mario. Tienes ${n} ${n === 1 ? 'recordatorio' : 'recordatorios'}. `;
-        items.slice(0, 6).forEach((it, i) => {
-            t += (n === 1 ? '' : ord[i] + ': ') + stop(it.title) + ' ' + (it.notes ? stop(it.notes.slice(0, 140)) + ' ' : '');
-        });
-        if (n > 6) t += `Y ${n - 6} más en pantalla.`;
-        return t.trim();
-    },
-
-    readReminders() {
+    // 5. VIAJE MANUAL CON CÁLCULO DE RUTA (ORIGEN -> DESTINO) Y CONFIRMACIÓN
+    openManualTripModal() {
         this.initAudio();
-        if (!(this.reminders.items || []).length) return this.triggerAlert('No tienes recordatorios pendientes.', false);
-        this.triggerAlert(this.buildBriefing(), false);
+        document.getElementById('manual-start-input').value = '';
+        document.getElementById('manual-end-input').value = '';
+        document.getElementById('manual-km-input').value = '';
+        this.updateManualPreview();
+        document.getElementById('manual-trip-modal').style.display = 'flex';
     },
 
-    // Se lee una vez al día, al primer viaje (hay gesto del usuario, así el navegador permite el audio)
-    briefingWanted() {
-        return Voice.prefs.briefing !== false && (this.reminders.items || []).length > 0
-            && localStorage.getItem('platina_briefing_date') !== new Date().toLocaleDateString('es-MX');
-    },
-    // Si toca leer recordatorios, los avisos cortos se unen a esa lectura para no pisarse
-    say(text) {
-        if (this.briefingWanted()) this._prefix = (this._prefix ? this._prefix + ' ' : '') + text;
-        else this.triggerAlert(text, false);
-    },
-    runBriefing() {
-        if (!this.briefingWanted()) return;
-        localStorage.setItem('platina_briefing_date', new Date().toLocaleDateString('es-MX'));
-        const text = `${this._prefix} ${this.buildBriefing()}`.trim();
-        this._prefix = '';
-        this.triggerAlert(text, false);
-    },
+    async calculateRouteDistance() {
+        const startText = document.getElementById('manual-start-input').value.trim();
+        const endText = document.getElementById('manual-end-input').value.trim();
+        const btn = document.getElementById('btn-calc-route');
 
-    // Prueba con los valores del formulario (sin guardar)
-    async previewVoice() {
-        const st = this.el('voice-status'), engine = this.el('input-ai-voice').value;
-        const key = this.el('input-gemini-key').value.trim();
-        const rate = parseFloat(this.el('input-voice-rate').value) || 1;
-        const localVoice = this.el('input-local-voice').value;
-        const sample = 'Hola Mario. Tienes doce punto siete litros en el tanque, para unos ciento veintisiete kilómetros.';
-        st.innerText = engine !== 'local' && key ? 'Generando voz neuronal…' : 'Reproduciendo voz local…';
-        Voice.stop(); Voice.beep('normal');
-        let used = 'local';
-        if (engine !== 'local' && key) {
-            const pcm = await Voice._neural(sample, { apiKey: key, geminiVoice: engine, critical: false });
-            if (pcm) { Voice._playPcm(pcm); used = 'gemini'; }
+        if (!startText || !endText) return alert('Escribe tanto el punto de inicio como el de destino.');
+        if (!navigator.onLine) return alert('Sin conexión para buscar calles. Ingresa los kilómetros directamente abajo.');
+
+        btn.innerText = '🔍 Calculando ruta por calle...';
+        try {
+            const [sCoord, eCoord] = await Promise.all([
+                this.searchPlaceCoords(startText),
+                this.searchPlaceCoords(endText)
+            ]);
+            if (!sCoord || !eCoord) {
+                btn.innerText = '📐 Calcular Kilometraje Automáticamente';
+                return alert('No encontré uno de los puntos. Intenta agregar el municipio o ciudad (ej. Tlalnepantla, CDMX).');
+            }
+
+            // Motor de rutas reales por calle OSRM
+            const routeRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${sCoord.lon},${sCoord.lat};${eCoord.lon},${eCoord.lat}?overview=false`);
+            const routeData = await routeRes.json();
+
+            let km = 0;
+            if (routeData?.routes?.[0]?.distance) {
+                km = routeData.routes[0].distance / 1000;
+            } else {
+                km = this.haversine(sCoord.lat, sCoord.lon, eCoord.lat, eCoord.lon) * 1.3;
+            }
+
+            document.getElementById('manual-km-input').value = km.toFixed(2);
+            this.updateManualPreview();
+            btn.innerText = `✅ Ruta calculada (${km.toFixed(1)} km)`;
+        } catch (e) {
+            btn.innerText = '📐 Calcular Kilometraje Automáticamente';
+            alert('Error al calcular ruta. Ingresa los kilómetros manualmente.');
         }
-        if (used === 'local') await Voice.previewLocal(sample, { localVoice, rate });
-        st.innerText = used === 'gemini' ? '✓ Voz neuronal Gemini' : (engine !== 'local' && key ? 'Gemini no respondió: se usó la voz local' : '✓ Voz local');
     },
 
-    async fillVoiceSettings() {
-        const gem = this.el('input-ai-voice');
-        gem.innerHTML = Voice.GEMINI_VOICES.map(([id, label]) => `<option value="${id}">${label}</option>`).join('')
-            + '<option value="local">Solo voz local (sin conexión)</option>';
-        gem.value = this.state.aiVoice || 'Aoede';
-
-        const sel = this.el('input-local-voice');
-        sel.innerHTML = '<option value="auto">Automática (la mejor disponible)</option>';
-        const list = await Voice.localList();
-        sel.innerHTML = '<option value="auto">Automática (la mejor disponible)</option>'
-            + list.map(v => `<option value="${this.esc(v.voiceURI)}">${Voice.score(v) >= 50 ? '★ ' : ''}${this.esc(v.name)} (${this.esc(v.lang)})</option>`).join('');
-        sel.value = list.some(v => v.voiceURI === Voice.prefs.localVoice) ? Voice.prefs.localVoice : 'auto';
-        const best = list[0];
-        this.el('local-voice-hint').innerText = best
-            ? `${list.length} voces en español detectadas. Mejor: ${best.name}${Voice.score(best) >= 50 ? ' (alta calidad)' : ''}.`
-            : 'No se detectaron voces en español en este dispositivo.';
-        const rate = Voice.prefs.rate || 1;
-        this.el('input-voice-rate').value = rate;
-        this.el('voice-rate-out').value = rate.toFixed(2) + '×';
-        this.el('voice-status').innerText = '';
+    async searchPlaceCoords(query) {
+        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ', Mexico')}&limit=1`);
+        const d = await r.json();
+        return d?.[0] ? { lat: parseFloat(d[0].lat), lon: parseFloat(d[0].lon) } : null;
     },
 
+    updateManualPreview() {
+        const km = parseFloat(document.getElementById('manual-km-input').value) || 0;
+        const fuel = km / this.state.efficiency;
+        const rem = Math.max(0, this.state.currentFuel - fuel);
+        document.getElementById('prev-km').innerText = `${km.toFixed(2)} km`;
+        document.getElementById('prev-fuel').innerText = `-${fuel.toFixed(2)} L`;
+        document.getElementById('prev-remaining').innerText = `${rem.toFixed(1)} L`;
+    },
+
+    confirmManualTrip() {
+        const km = parseFloat(document.getElementById('manual-km-input').value);
+        if (isNaN(km) || km <= 0) return alert('Verifica que los kilómetros sean mayores a 0 antes de confirmar.');
+
+        const startAddr = document.getElementById('manual-start-input').value.trim() || "Registro Manual";
+        const endAddr = document.getElementById('manual-end-input').value.trim() || "Registro Manual";
+        const spent = km / this.state.efficiency;
+
+        if (!confirm(`¿Confirmas guardar este viaje?\n\n• Origen: ${startAddr}\n• Destino: ${endAddr}\n• Distancia: ${km.toFixed(2)} km\n• Consumo: -${spent.toFixed(2)} L`)) return;
+
+        this.state.refuelOdoKm += km;
+        this.state.lifetimeOdoKm += km;
+        this.state.currentFuel = Math.max(0, this.state.currentFuel - spent);
+        this.state.cycleTripsCount = (this.state.cycleTripsCount || 0) + 1;
+
+        const now = new Date();
+        this.state.trips.unshift({
+            id: Date.now(), date: now.toLocaleDateString('es-MX'),
+            startTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
+            endTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
+            km: Number(km.toFixed(2)), fuelUsed: Number(spent.toFixed(2)),
+            fuelRemaining: Number(this.state.currentFuel.toFixed(1)),
+            startAddress: startAddr, endAddress: endAddr, addressResolved: true
+        });
+
+        this.closeModal('manual-trip-modal');
+        this.saveLocalState(true);
+        this.pushToFirebase();
+        this.triggerAlert(`Viaje de ${km.toFixed(1)} kilómetros registrado correctamente.`, false);
+    },
+
+    // 6. UTILIDADES DE CABINA (HUD & ESTACIONAMIENTO)
+    toggleHudMode() {
+        document.body.classList.toggle('hud-mirror');
+    },
+
+    openParkedCarLocation() {
+        if (!this.state.parkedCoords?.lat) {
+            return alert('Aún no hay ubicación de estacionamiento guardada. Se guarda automáticamente al finalizar un viaje con GPS.');
+        }
+        const { lat, lon, time } = this.state.parkedCoords;
+        if (confirm(`Último estacionamiento guardado (${time || 'Reciente'}).\n¿Abrir ruta caminando hacia el Platina en Google Maps?`)) {
+            window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking`, '_blank');
+        }
+    },
+
+    // 7. FIREBASE & GPS TRACKING
     saveLocalState(mark = true) {
         if (mark) this.state.lastUpdated = Date.now();
         localStorage.setItem('platina_state_v4', JSON.stringify(this.state));
@@ -180,8 +396,9 @@ const App = {
     },
 
     async syncWithFirebase(manual = false) {
-        if (!navigator.onLine) { this.setCloud('offline', 'Offline'); return; }
-        this.setCloud('sync', 'Sync');
+        const el = document.getElementById('cloud-status');
+        if (!navigator.onLine) { el.innerText = '📴'; return; }
+        el.innerText = '🔄';
         try {
             const res = await fetch(FIREBASE_URL);
             const remote = await res.json();
@@ -190,26 +407,23 @@ const App = {
                 const trips = this.mergeById(this.state.trips || [], remote.trips || []);
                 const cycles = this.mergeById(this.state.refuelCycles || [], remote.refuelCycles || []);
                 if ((remote.lastUpdated || 0) > (this.state.lastUpdated || 0)) {
-                    this.state = { ...this.state, ...remote, trips, refuelCycles: cycles, geminiApiKey: this.state.geminiApiKey || "" };
+                    this.state = { ...this.state, ...remote, trips, refuelCycles: cycles, geminiApiKey: this.state.geminiApiKey || remote.geminiApiKey || "" };
                     this.saveLocalState(false);
-                    if (manual) this.triggerAlert('Sincronización completada.', false);
+                    if (manual) this.triggerAlert('Datos sincronizados con la nube.', false);
                 } else {
                     this.state.trips = trips; this.state.refuelCycles = cycles;
                     await this.pushToFirebase();
                 }
             }
-            this.setCloud('online', 'Online');
-        } catch (e) { this.setCloud('error', 'Red'); }
+            el.innerText = '☁️ OK';
+        } catch (e) { el.innerText = '⚠️'; }
     },
-
-    // La API key NUNCA se sube a la nube: queda solo en este dispositivo.
-    publicState() { const { geminiApiKey, ...rest } = this.state; return rest; },
 
     async pushToFirebase() {
         if (!navigator.onLine) return;
         try {
-            await fetch(FIREBASE_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.publicState()) });
-            this.setCloud('online', 'Online');
+            await fetch(FIREBASE_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.state) });
+            document.getElementById('cloud-status').innerText = '☁️ OK';
         } catch (e) {}
     },
 
@@ -258,7 +472,7 @@ const App = {
         if (this.state.lastAskedDate !== today) {
             document.getElementById('daily-question-modal').style.display = 'flex';
         } else {
-            if (this.state.planToRefuelToday) this.say('Recuerda que hoy planeaste recargar gasolina.');
+            if (this.state.planToRefuelToday) this.triggerAlert('Recuerda que hoy planeaste pasar a la gasolinera.', false);
             this.startTripGPS();
         }
     },
@@ -268,23 +482,22 @@ const App = {
         this.state.planToRefuelToday = val;
         this.closeModal('daily-question-modal');
         this.saveLocalState(true); this.pushToFirebase();
-        if (val) this.say('Entendido. Te recordaré registrar los litros.');
+        if (val) this.triggerAlert('Perfecto Mario, yo te recuerdo registrar la carga.', false);
         this.startTripGPS();
     },
 
     async startTripGPS() {
-        this.runBriefing();
         if (!navigator.geolocation) return alert('GPS no soportado.');
         if ('wakeLock' in navigator) { try { await navigator.wakeLock.request('screen'); } catch (e) {} }
         this.currentTripKm = 0.0; this.lastPos = null; this.tripStartCoords = null; this.tripEndCoords = null; this.tripStartTime = new Date();
-        this.setTripButton(true);
+        document.getElementById('btn-gps-toggle').innerText = '⏹ Finalizar';
+        document.getElementById('btn-gps-toggle').className = 'btn-crimson';
         document.getElementById('gps-dot').className = 'dot searching';
         document.getElementById('speed-ring').classList.add('gps-live');
         this.updateUI();
 
         this.watchId = navigator.geolocation.watchPosition(pos => {
             document.getElementById('gps-dot').className = 'dot active';
-            document.getElementById('gps-pill').classList.add('live');
             document.getElementById('gps-status').innerText = `GPS ±${Math.round(pos.coords.accuracy)}m`;
             this.currentSpeedKmh = (pos.coords.speed && pos.coords.speed > 0) ? Math.round(pos.coords.speed * 3.6) : 0;
             if (!this.tripStartCoords && pos.coords.accuracy < 65) this.tripStartCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
@@ -299,7 +512,6 @@ const App = {
                 }
             } else if (!this.lastPos && pos.coords.accuracy < 60) { this.lastPos = pos.coords; }
             document.getElementById('speed-display').innerText = this.currentSpeedKmh;
-            this.setDial(this.currentSpeedKmh);
             document.getElementById('current-trip-km').innerText = this.currentTripKm.toFixed(2);
         }, () => {}, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
     },
@@ -309,14 +521,20 @@ const App = {
         this.watchId = null; this.currentSpeedKmh = 0;
         document.getElementById('speed-display').innerText = '0';
         document.getElementById('speed-ring').classList.remove('gps-live');
-        this.setTripButton(false);
-        this.setDial(0);
-        document.getElementById('gps-pill').classList.remove('live');
+        document.getElementById('btn-gps-toggle').innerText = '▶ Iniciar Viaje';
+        document.getElementById('btn-gps-toggle').className = 'btn-cobalt';
         document.getElementById('gps-dot').className = 'dot';
         document.getElementById('gps-status').innerText = 'GPS: Off';
 
+        const now = new Date();
+        if (this.tripEndCoords) {
+            this.state.parkedCoords = {
+                lat: this.tripEndCoords.lat, lon: this.tripEndCoords.lon,
+                time: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'})
+            };
+        }
+
         if (this.currentTripKm >= 0.02) {
-            const now = new Date();
             this.state.trips.unshift({
                 id: Date.now(), date: now.toLocaleDateString('es-MX'),
                 startTime: this.tripStartTime.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
@@ -333,58 +551,15 @@ const App = {
         this.currentTripKm = 0.0;
         document.getElementById('current-trip-km').innerText = '0.00';
         this.saveLocalState(true); this.pushToFirebase(); this.resolvePendingAddresses();
-        if (this.state.planToRefuelToday) this.triggerAlert('Viaje finalizado. Recuerda registrar tus litros si ya pasaste a la gasolinera.', false);
+        if (this.state.planToRefuelToday) this.triggerAlert('Viaje finalizado y ubicación guardada. No olvides registrar tus litros si recargaste.', false);
         else this.playBeep('normal');
-    },
-
-    addManualKm() {
-        const km = parseFloat(prompt('¿Kilómetros recorridos?', '5.0'));
-        if (!isNaN(km) && km > 0) {
-            const spent = km / this.state.efficiency;
-            this.state.refuelOdoKm += km; this.state.lifetimeOdoKm += km;
-            this.state.currentFuel = Math.max(0, this.state.currentFuel - spent);
-            this.state.cycleTripsCount = (this.state.cycleTripsCount || 0) + 1;
-            const now = new Date();
-            this.state.trips.unshift({
-                id: Date.now(), date: now.toLocaleDateString('es-MX'),
-                startTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
-                endTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
-                km: Number(km.toFixed(2)), fuelUsed: Number(spent.toFixed(2)),
-                fuelRemaining: Number(this.state.currentFuel.toFixed(1)),
-                startAddress: "Manual", endAddress: "Manual", addressResolved: true
-            });
-            this.saveLocalState(true); this.pushToFirebase();
-        }
     },
 
     openRefuelModal() {
         document.getElementById('modal-cycle-km').innerText = this.state.refuelOdoKm.toFixed(1);
         document.getElementById('input-refuel-liters').value = '';
         document.getElementById('input-refuel-cost').value = '';
-        document.getElementById('ticket-status').innerText = '';
-        document.getElementById('refuel-date').innerText = new Date().toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-        document.getElementById('modal-cycle-trips').innerText = this.state.cycleTripsCount || 0;
-        this.updateRefuelPreview();
         document.getElementById('refuel-modal').style.display = 'flex';
-    },
-
-    // Vista previa en vivo: precio unitario, rendimiento del ciclo y nivel de tanque
-    updateRefuelPreview() {
-        const cap = this.state.tankCapacity, before = this.state.currentFuel;
-        const l = Math.max(0, parseFloat(this.el('input-refuel-liters').value) || 0);
-        const c = Math.max(0, parseFloat(this.el('input-refuel-cost').value) || 0);
-        const after = Math.min(cap, before + l), added = after - before;
-        const pBefore = before / cap * 100, pAfter = after / cap * 100;
-        this.el('refuel-unit-price').innerText = l > 0 && c > 0 ? `$${(c / l).toFixed(2)} / L` : '—';
-        this.el('modal-cycle-eff').innerText = l > 0 && this.state.refuelOdoKm > 0 ? (this.state.refuelOdoKm / l).toFixed(1) : '—';
-        this.el('preview-before-pct').innerText = Math.round(pBefore) + '%';
-        this.el('preview-after-pct').innerText = Math.round(pAfter) + '%';
-        this.el('preview-after-l').innerText = l > 0 ? `(${after.toFixed(1)} L)` : '';
-        this.el('preview-prev').style.width = pBefore + '%';
-        this.el('preview-add').style.width = (pAfter - pBefore) + '%';
-        this.el('preview-prev-l').innerText = `Previo: ${before.toFixed(1)} L`;
-        this.el('preview-cap').innerText = `Cap: ${cap.toFixed(1)} L`;
-        this.el('preview-add-l').innerText = `Carga: +${added.toFixed(1)} L`;
     },
 
     confirmRefuel() {
@@ -416,7 +591,7 @@ const App = {
         this.state.cycleStartDate = now.toLocaleDateString('es-MX');
         this.state.planToRefuelToday = false;
         this.saveLocalState(true); this.pushToFirebase();
-        this.triggerAlert(`Recarga de ${liters.toFixed(1)} litros registrada. Odómetro reiniciado.`, false);
+        this.triggerAlert(`Listo Mario, sumamos ${liters.toFixed(1)} litros al tanque. Odómetro parcial en cero.`, false);
     },
 
     adjustTrafficFuel() {
@@ -428,11 +603,11 @@ const App = {
         const file = e.target.files[0];
         if (!file || !navigator.onLine || !this.state.geminiApiKey) return;
         const st = document.getElementById('ticket-status');
-        st.innerText = 'Leyendo ticket…';
+        st.innerText = '🔍 Leyendo ticket...';
         try {
             const b64 = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(file); });
-            const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.state.geminiApiKey },
+            const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.state.geminiApiKey}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ contents: [{ parts: [{ text: "Extrae litros y costo total en JSON: {\"liters\":0.0,\"cost\":0.0}" }, { inline_data: { mime_type: file.type, data: b64 } }] }] })
             });
             const d = await resp.json();
@@ -441,64 +616,22 @@ const App = {
                 const p = JSON.parse(match[0]);
                 if (p.liters) document.getElementById('input-refuel-liters').value = p.liters;
                 if (p.cost) document.getElementById('input-refuel-cost').value = p.cost;
-                st.innerText = `Leído: ${p.liters} L · $${p.cost}`;
-                this.updateRefuelPreview();
+                st.innerText = `✅ ${p.liters} L ($${p.cost})`;
             }
-        } catch (err) { st.innerText = 'No se pudo leer: ingresa los litros manualmente.'; }
+        } catch (err) { st.innerText = '⚠️ Ingresa los litros manualmente.'; }
     },
 
     openHistoryModal() {
         if (this.watchId !== null || this.currentSpeedKmh > 3) return alert('🛑 Detén el auto para ver la bitácora.');
-        const trips = this.state.trips || [], cycles = this.state.refuelCycles || [];
-        this.el('count-trips').innerText = trips.length;
-        this.el('count-cycles').innerText = cycles.length;
-
-        const totalKm = trips.reduce((a, t) => a + (Number(t.km) || 0), 0);
-        const totalL = cycles.reduce((a, c) => a + (Number(c.litersAdded) || 0), 0);
-        const head = (label, total) => `<div class="list-head"><span class="overline">${label}</span><strong>${total}</strong></div>`;
-
-        this.el('history-trips-view').innerHTML = trips.length
-            ? head('Sesiones de conducción', `TOTAL: ${totalKm.toFixed(2)} KM`) + trips.map(t => `
-            <article class="log-card">
-                <div class="log-top">
-                    <div class="log-when"><span class="icon-tile">${this.ico('calendar')}</span>
-                        <div><p class="log-date">${this.esc(t.date)}</p><p class="log-time">${this.esc(t.startTime)} - ${this.esc(t.endTime)}</p></div></div>
-                    <div class="log-stat"><div class="log-big">${this.esc(t.km)} <small>km</small></div><span class="chip chip-amber">-${this.esc(t.fuelUsed)} L</span></div>
-                </div>
-                <ol class="timeline">
-                    <li><span class="tl-label">Origen</span><span class="tl-addr">${this.esc(t.startAddress)}</span></li>
-                    <li class="end"><span class="tl-label">Destino</span><span class="tl-addr">${this.esc(t.endAddress)}</span></li>
-                </ol>
-            </article>`).join('')
-            : '<div class="empty">Aún no hay viajes registrados.</div>';
-
-        const cap = this.state.tankCapacity;
-        this.el('history-cycles-view').innerHTML = cycles.length
-            ? head('Ciclos de recarga', `TOTAL: ${totalL.toFixed(1)} L`) + cycles.map(c => {
-                const before = Number(c.fuelBeforeRefuel) || 0, add = Number(c.litersAdded) || 0;
-                const pBefore = Math.min(100, before / cap * 100), pAdd = Math.min(100 - pBefore, add / cap * 100);
-                const eff = add > 0 && c.kmDriven > 0 ? (c.kmDriven / add).toFixed(1) : '—';
-                const price = add > 0 && c.costPaid > 0 ? ` · $${(c.costPaid / add).toFixed(2)}/L` : '';
-                return `
-            <article class="log-card">
-                <div class="log-top">
-                    <div class="log-when"><span class="icon-tile amber">${this.ico('fuel')}</span>
-                        <div><p class="log-date">${this.esc(c.endDate)}</p><p class="log-time">${this.esc(c.method || 'Recarga')}${price}</p></div></div>
-                    <div class="log-stat"><div class="log-big cyan">+${this.esc(c.litersAdded)} <small>L</small></div>${c.costPaid > 0 ? `<span class="chip chip-amber">$${Number(c.costPaid).toFixed(2)}</span>` : ''}</div>
-                </div>
-                <div class="mini-metrics">
-                    <div class="metric-tile"><div class="metric-label">Ciclo</div><div class="metric-val">${this.esc(c.kmDriven)}</div><small>km</small></div>
-                    <div class="metric-tile"><div class="metric-label">Rend.</div><div class="metric-val cyan">${eff}</div><small>km/L</small></div>
-                    <div class="metric-tile"><div class="metric-label">Viajes</div><div class="metric-val">${this.esc(c.tripsCount)}</div><small>en ciclo</small></div>
-                </div>
-                <div class="tank-mini">
-                    <div class="stack-bar"><div class="prev" style="width:${pBefore}%"></div><div class="add" style="width:${pAdd}%"></div></div>
-                    <div class="tank-mini-row"><span>Reserva previa: ${before} L</span><span>Tanque tras carga: ${Math.min(cap, before + add).toFixed(1)} L</span></div>
-                </div>
-            </article>`; }).join('')
-            : '<div class="empty">Aún no hay recargas registradas.</div>';
-
-        this.el('history-modal').style.display = 'flex';
+        document.getElementById('count-trips').innerText = (this.state.trips || []).length;
+        document.getElementById('count-cycles').innerText = (this.state.refuelCycles || []).length;
+        document.getElementById('history-trips-view').innerHTML = (this.state.trips || []).map(t => `
+            <div class="log-card"><div class="log-header"><span>📅 ${t.date} (${t.startTime}-${t.endTime})</span><span class="log-badge">${t.km} km • -${t.fuelUsed}L</span></div>
+            <div>🟢 ${t.startAddress}</div><div>🔴 ${t.endAddress}</div></div>`).join('');
+        document.getElementById('history-cycles-view').innerHTML = (this.state.refuelCycles || []).map(c => `
+            <div class="log-card"><div class="log-header"><span>⛽ ${c.endDate}</span><span class="log-badge">+${c.litersAdded} L ${c.costPaid ? '($'+c.costPaid+')' : ''}</span></div>
+            <div>🛣️ Ciclo: ${c.kmDriven} km (${c.tripsCount} viajes) | Reserva: ${c.fuelBeforeRefuel}L</div></div>`).join('');
+        document.getElementById('history-modal').style.display = 'flex';
     },
 
     switchHistoryTab(tab) {
@@ -525,10 +658,11 @@ const App = {
     openSettings() {
         document.getElementById('input-efficiency').value = this.state.efficiency;
         document.getElementById('input-current-fuel').value = this.state.currentFuel.toFixed(1);
-        this.fillVoiceSettings();
-        this.el('input-briefing').checked = Voice.prefs.briefing !== false;
-        this.el('reminders-status').innerText = '';
+        document.getElementById('input-plate-digit').value = this.state.plateDigit || '5';
+        document.getElementById('input-hologram').value = this.state.hologram || '1';
+        document.getElementById('input-ai-voice').value = this.state.aiVoice || 'Aoede';
         document.getElementById('input-gemini-key').value = this.state.geminiApiKey || '';
+        document.getElementById('input-stream-url').value = this.state.streamUrl || '';
         document.getElementById('settings-modal').style.display = 'flex';
     },
 
@@ -537,24 +671,17 @@ const App = {
         const cur = parseFloat(document.getElementById('input-current-fuel').value);
         if (!isNaN(eff) && eff > 0) this.state.efficiency = eff;
         if (!isNaN(cur) && cur >= 0) this.state.currentFuel = Math.min(this.state.tankCapacity, cur);
+        this.state.plateDigit = document.getElementById('input-plate-digit').value;
+        this.state.hologram = document.getElementById('input-hologram').value;
         this.state.aiVoice = document.getElementById('input-ai-voice').value;
-        Voice.savePrefs({ briefing: document.getElementById('input-briefing').checked, localVoice: document.getElementById('input-local-voice').value, rate: parseFloat(document.getElementById('input-voice-rate').value) || 1 });
         this.state.geminiApiKey = document.getElementById('input-gemini-key').value.trim();
+        this.state.streamUrl = document.getElementById('input-stream-url').value.trim();
         localStorage.setItem('platina_gemini_key', this.state.geminiApiKey);
         this.saveLocalState(true); this.pushToFirebase();
         this.closeModal('settings-modal');
     },
 
-    closeModal(id) {
-        document.getElementById(id).style.display = 'none';
-        if (id === 'settings-modal') Voice.stop();
-    },
-
-    // Aguja del velocímetro: 0–120 km/h sobre el arco
-    setDial(kmh) {
-        const pct = Math.max(2, Math.min(100, (kmh / 120) * 100));
-        document.getElementById('dial-active').style.strokeDasharray = `${pct} 100`;
-    },
+    closeModal(id) { document.getElementById(id).style.display = 'none'; },
 
     updateUI() {
         const pct = Math.max(0, Math.min(100, (this.state.currentFuel / this.state.tankCapacity) * 100));
@@ -562,30 +689,35 @@ const App = {
         document.getElementById('fuel-liters').innerText = this.state.currentFuel.toFixed(1);
         document.getElementById('fuel-pct').innerText = Math.round(pct);
         document.getElementById('fuel-bar').style.width = pct + '%';
-        document.getElementById('odo-total').innerText = (this.state.lifetimeOdoKm || 0).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-        const gauge = document.getElementById('fuel-gauge');
-        gauge.classList.toggle('is-critical', pct <= 15);
-        gauge.classList.toggle('is-low', pct > 15 && pct <= 25);
         document.getElementById('range-km').innerText = range;
         document.getElementById('efficiency-val').innerText = this.state.efficiency.toFixed(1);
         document.getElementById('refuel-odo-km').innerText = (this.state.refuelOdoKm || 0).toFixed(1);
         document.getElementById('refuel-reminder-banner').style.display = this.state.planToRefuelToday ? 'flex' : 'none';
 
+        this.evaluateHoyNoCircula();
+
+        // Calcular Costo por KM
+        const paidCycles = (this.state.refuelCycles || []).filter(c => c.costPaid > 0 && c.kmDriven > 0);
+        if (paidCycles.length > 0) {
+            const totalCost = paidCycles.reduce((s, c) => s + c.costPaid, 0);
+            const totalKm = paidCycles.reduce((s, c) => s + c.kmDriven, 0);
+            document.getElementById('cost-per-km').innerText = `$${(totalCost / totalKm).toFixed(2)}`;
+        } else {
+            document.getElementById('cost-per-km').innerText = `$${(24.5 / this.state.efficiency).toFixed(2)} est.`;
+        }
+
+        if (this.state.parkedCoords?.time) {
+            document.getElementById('footer-parked-status').innerText = `PIN: ${this.state.parkedCoords.time}`;
+        }
+
         const banner = document.getElementById('alert-banner');
         if (pct <= 15) {
-            this.showAlert('is-critical', `Reserva crítica · ${this.state.currentFuel.toFixed(1)} L`, range);
-            if (!this.state.criticalFuelAlerted) { this.triggerAlert(`Atención Mario, reserva crítica. Quedan ${Math.round(this.state.currentFuel)} litros.`, true); this.state.criticalFuelAlerted = true; }
+            banner.style.display = 'flex'; banner.innerText = `🚨 RESERVA CRÍTICA: ${this.state.currentFuel.toFixed(1)} L`;
+            if (!this.state.criticalFuelAlerted) { this.triggerAlert(`Oye Mario, estamos en reserva crítica. Quedan solo ${Math.round(this.state.currentFuel)} litros.`, true); this.state.criticalFuelAlerted = true; }
         } else if (pct <= 25) {
-            this.showAlert('is-warn', `Reserva baja · ${this.state.currentFuel.toFixed(1)} L`, range);
-            if (!this.state.lowFuelAlerted) { this.triggerAlert(`Nivel bajo de combustible. Quedan ${Math.round(this.state.currentFuel)} litros.`, false); this.state.lowFuelAlerted = true; }
+            banner.style.display = 'flex'; banner.innerText = `⚠️ NIVEL BAJO: ${this.state.currentFuel.toFixed(1)} L`;
+            if (!this.state.lowFuelAlerted) { this.triggerAlert(`Aviso de cabina: nivel bajo de gasolina, nos quedan ${Math.round(this.state.currentFuel)} litros.`, false); this.state.lowFuelAlerted = true; }
         } else { banner.style.display = 'none'; this.state.lowFuelAlerted = false; this.state.criticalFuelAlerted = false; }
-    },
-
-    showAlert(level, title, range) {
-        const b = document.getElementById('alert-banner');
-        b.className = 'banner ' + level; b.style.display = 'flex';
-        document.getElementById('alert-title').innerText = title;
-        document.getElementById('alert-sub').innerText = `Recarga sugerida · Autonomía ~${range} km`;
     },
 
     haversine(lat1, lon1, lat2, lon2) {
