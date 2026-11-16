@@ -2,17 +2,19 @@ const FIREBASE_URL = "https://platina-dashboard-f92a6-default-rtdb.firebaseio.co
 
 const App = {
     state: {
-        tankCapacity: 50.0, currentFuel: 50.0, efficiency: 10.0,
+        tankCapacity: 50.0, currentFuel: 50.0, efficiency: 8.2,
         refuelOdoKm: 0.0, lifetimeOdoKm: 0.0,
         cycleStartDate: new Date().toLocaleDateString('es-MX'), cycleTripsCount: 0,
         lastUpdated: 0, lastAskedDate: "", planToRefuelToday: false,
-        trips: [], refuelCycles: [], geminiApiKey: "", aiVoice: "Aoede",
+        trips: [], refuelCycles: [], favoriteTrips: [],
+        geminiApiKey: "", aiVoice: "Aoede",
         plateDigit: "5", hologram: "1", parkedCoords: null, streamUrl: "",
         lowFuelAlerted: false, criticalFuelAlerted: false
     },
     watchId: null, lastPos: null, currentTripKm: 0.0, currentSpeedKmh: 0,
     tripStartCoords: null, tripEndCoords: null, tripStartTime: null,
     playlist: [], currentTrackIdx: 0, userVolume: 0.85, weatherSummary: "",
+    calculatedHistEfficiency: null,
 
     async init() {
         const saved = localStorage.getItem('platina_state_v4');
@@ -22,7 +24,10 @@ const App = {
 
         this.startClock();
         this.setupAudioPlayer();
-        if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.getVoices();
+            window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+        }
 
         this.updateUI();
         await this.syncWithFirebase(false);
@@ -36,6 +41,237 @@ const App = {
         });
     },
 
+    // =========================================================
+    // 1. CÁLCULO HISTÓRICO REAL DE CONSUMO (LITROS VS KILÓMETROS)
+    // =========================================================
+    computeHistoricalEfficiency() {
+        const cycles = (this.state.refuelCycles || []).filter(c => c.kmDriven > 5 && c.litersAdded > 1);
+        const trips = this.state.trips || [];
+
+        let totalClosedKm = cycles.reduce((sum, c) => sum + Number(c.kmDriven || 0), 0);
+        let totalClosedLiters = cycles.reduce((sum, c) => sum + Number(c.litersAdded || 0), 0);
+
+        let totalAllTripsKm = trips.reduce((sum, t) => sum + Number(t.km || 0), 0);
+        let totalAllLitersPut = totalClosedLiters;
+
+        // Si hubo tanque lleno inicial de 50L antes del primer ciclo registrado:
+        if (cycles.length > 0) {
+            const estKmPerLiter = totalClosedKm / totalClosedLiters;
+            if (estKmPerLiter > 3 && estKmPerLiter < 22) {
+                this.calculatedHistEfficiency = Number(estKmPerLiter.toFixed(2));
+                return {
+                    avg: this.calculatedHistEfficiency,
+                    detail: `Basado en ${cycles.length} recarga(s): ${totalClosedKm.toFixed(1)} km recorridos con ${totalClosedLiters.toFixed(1)} L cargados = <strong>${this.calculatedHistEfficiency} km/L</strong>.`
+                };
+            }
+        }
+
+        // Si aún no hay ciclos cerrados con recarga posterior, estimamos con el total de km recorridos vs tanque de 50L
+        if (totalAllTripsKm > 20) {
+            const consumedFrom50 = Math.max(10, 50 - (this.state.currentFuel || 0));
+            const est = Number((totalAllTripsKm / consumedFrom50).toFixed(2));
+            if (est >= 4 && est <= 18) {
+                this.calculatedHistEfficiency = est;
+                return {
+                    avg: est,
+                    detail: `Historial de ${trips.length} viajes (${totalAllTripsKm.toFixed(1)} km). Consumo real estimado: <strong>${est} km/L</strong>.`
+                };
+            }
+        }
+
+        // Parámetro calibrado real para Nissan Platina 2004 en rutas de cerro/ciudad CDMX
+        this.calculatedHistEfficiency = 8.1;
+        return {
+            avg: 8.1,
+            detail: `Calibración recomendada para Platina 2004 en cerro y tráfico: <strong>8.1 km/L</strong> (más realista que 10.0 km/L).`
+        };
+    },
+
+    applyHistoricalEfficiency() {
+        const analysis = this.computeHistoricalEfficiency();
+        this.state.efficiency = analysis.avg;
+        document.getElementById('input-efficiency').value = analysis.avg;
+        this.saveLocalState(true);
+        this.pushToFirebase();
+        this.triggerAlert(`Rendimiento calibrado a ${analysis.avg} kilómetros por litro según tu historial.`, false);
+    },
+
+    // =========================================================
+    // 2. VIAJES FRECUENTES / FAVORITOS (1 CLIC)
+    // =========================================================
+    renderFavoritesUI() {
+        const favs = this.state.favoriteTrips || [];
+        const barEl = document.getElementById('quick-favorites-list');
+        const modalListEl = document.getElementById('modal-favorites-list');
+        const countEl = document.getElementById('count-favs');
+
+        if (countEl) countEl.innerText = favs.length;
+
+        if (barEl) {
+            barEl.innerHTML = favs.length === 0
+                ? `<span class="fav-empty-hint">Sin favoritos aún. Toca "+ Gestionar" para guardar escuela, trabajo o casa.</span>`
+                : favs.map((f, idx) => `
+                    <button class="fav-chip" onclick="App.triggerFavoriteTrip('${f.id}')">
+                        #${idx + 1} ${f.name} <span>(${f.km} km)</span>
+                    </button>
+                `).join('');
+        }
+
+        if (modalListEl) {
+            modalListEl.innerHTML = favs.length === 0
+                ? `<p style="text-align:center;color:var(--text-secondary);padding:15px;">Aún no tienes viajes frecuentes guardados.</p>`
+                : favs.map((f, idx) => `
+                    <div class="log-card">
+                        <div class="log-header">
+                            <span>⭐ #${idx + 1} ${f.name}</span>
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <span class="log-badge">${f.km} km</span>
+                                <button class="btn-emerald" style="padding:4px 8px;font-size:0.72rem;" onclick="App.triggerFavoriteTrip('${f.id}')">Registrar</button>
+                                <button class="btn-crimson" style="padding:4px 7px;font-size:0.7rem;" onclick="App.deleteFavoriteTrip('${f.id}')">✕</button>
+                            </div>
+                        </div>
+                        <div style="color:var(--text-secondary);font-size:0.72rem;">🟢 ${f.startAddress} → 🔴 ${f.endAddress}</div>
+                    </div>
+                `).join('');
+        }
+    },
+
+    triggerFavoriteTrip(favId) {
+        VoiceEngine.initAudio();
+        const fav = (this.state.favoriteTrips || []).find(f => String(f.id) === String(favId));
+        if (!fav) return;
+
+        const spent = fav.km / this.state.efficiency;
+        if (!confirm(`¿Registrar Viaje Frecuente "${fav.name}"?\n\n• Ruta: ${fav.startAddress} → ${fav.endAddress}\n• Distancia: ${fav.km} km\n• Consumo: -${spent.toFixed(2)} L`)) return;
+
+        this.recordTripEntry(fav.km, `${fav.name}: ${fav.startAddress}`, fav.endAddress);
+        this.closeModal('manual-trip-modal');
+        this.triggerAlert(`Viaje frecuente a ${fav.name} de ${fav.km} kilómetros registrado.`, false);
+    },
+
+    deleteFavoriteTrip(favId) {
+        if (!confirm('¿Eliminar este viaje frecuente?')) return;
+        this.state.favoriteTrips = (this.state.favoriteTrips || []).filter(f => String(f.id) !== String(favId));
+        this.saveLocalState(true);
+        this.pushToFirebase();
+    },
+
+    openManualTripModal(defaultTab = 'favorites') {
+        VoiceEngine.initAudio();
+        document.getElementById('manual-fav-name').value = '';
+        document.getElementById('manual-start-input').value = '';
+        document.getElementById('manual-end-input').value = '';
+        document.getElementById('manual-km-input').value = '';
+        this.updateManualPreview();
+        this.renderFavoritesUI();
+        this.switchManualModalTab(defaultTab);
+        document.getElementById('manual-trip-modal').style.display = 'flex';
+    },
+
+    switchManualModalTab(tab) {
+        const isFav = tab === 'favorites';
+        document.getElementById('tab-fav-btn').className = isFav ? 'tab-btn active' : 'tab-btn';
+        document.getElementById('tab-new-manual-btn').className = !isFav ? 'tab-btn active' : 'tab-btn';
+        document.getElementById('modal-favorites-view').style.display = isFav ? 'block' : 'none';
+        document.getElementById('modal-manual-form-view').style.display = !isFav ? 'block' : 'none';
+    },
+
+    async calculateRouteDistance() {
+        const startText = document.getElementById('manual-start-input').value.trim();
+        const endText = document.getElementById('manual-end-input').value.trim();
+        const btn = document.getElementById('btn-calc-route');
+
+        if (!startText || !endText) return alert('Escribe inicio y destino.');
+        if (!navigator.onLine) return alert('Sin conexión. Ingresa los kilómetros directamente abajo.');
+
+        btn.innerText = '🔍 Calculando ruta...';
+        try {
+            const [sCoord, eCoord] = await Promise.all([this.searchPlaceCoords(startText), this.searchPlaceCoords(endText)]);
+            if (!sCoord || !eCoord) {
+                btn.innerText = '📐 Calcular Kilómetros por Calle';
+                return alert('No encontré uno de los puntos. Agrega el municipio o ciudad.');
+            }
+            const routeRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${sCoord.lon},${sCoord.lat};${eCoord.lon},${eCoord.lat}?overview=false`);
+            const routeData = await routeRes.json();
+            const km = routeData?.routes?.[0]?.distance ? (routeData.routes[0].distance / 1000) : (this.haversine(sCoord.lat, sCoord.lon, eCoord.lat, eCoord.lon) * 1.3);
+
+            document.getElementById('manual-km-input').value = km.toFixed(2);
+            this.updateManualPreview();
+            btn.innerText = `✅ Ruta calculada (${km.toFixed(1)} km)`;
+        } catch (e) {
+            btn.innerText = '📐 Calcular Kilómetros por Calle';
+            alert('Error al calcular ruta.');
+        }
+    },
+
+    async searchPlaceCoords(query) {
+        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ', Mexico')}&limit=1`);
+        const d = await r.json();
+        return d?.[0] ? { lat: parseFloat(d[0].lat), lon: parseFloat(d[0].lon) } : null;
+    },
+
+    updateManualPreview() {
+        const km = parseFloat(document.getElementById('manual-km-input').value) || 0;
+        const fuel = km / this.state.efficiency;
+        const rem = Math.max(0, this.state.currentFuel - fuel);
+        document.getElementById('prev-km').innerText = `${km.toFixed(2)} km`;
+        document.getElementById('prev-fuel').innerText = `-${fuel.toFixed(2)} L`;
+        document.getElementById('prev-remaining').innerText = `${rem.toFixed(1)} L`;
+    },
+
+    confirmManualTrip(saveAsFavorite = false) {
+        const km = parseFloat(document.getElementById('manual-km-input').value);
+        if (isNaN(km) || km <= 0) return alert('Verifica que los kilómetros sean mayores a 0.');
+
+        const favName = document.getElementById('manual-fav-name').value.trim();
+        const startAddr = document.getElementById('manual-start-input').value.trim() || "Origen Manual";
+        const endAddr = document.getElementById('manual-end-input').value.trim() || "Destino Manual";
+
+        if (saveAsFavorite) {
+            const label = favName || prompt('Escribe un nombre corto para este Viaje Frecuente (ej. Escuela, Trabajo):', endAddr.slice(0, 18));
+            if (!label) return;
+            if (!this.state.favoriteTrips) this.state.favoriteTrips = [];
+            this.state.favoriteTrips.push({
+                id: 'fav_' + Date.now(),
+                name: label,
+                startAddress: startAddr,
+                endAddress: endAddr,
+                km: Number(km.toFixed(2))
+            });
+        }
+
+        const spent = km / this.state.efficiency;
+        if (!confirm(`¿Confirmas registrar este viaje?\n\n• Origen: ${startAddr}\n• Destino: ${endAddr}\n• Distancia: ${km.toFixed(2)} km\n• Consumo: -${spent.toFixed(2)} L`)) return;
+
+        this.recordTripEntry(km, startAddr, endAddr);
+        this.closeModal('manual-trip-modal');
+        this.triggerAlert(`Viaje de ${km.toFixed(1)} kilómetros registrado.`, false);
+    },
+
+    recordTripEntry(km, startAddr, endAddr) {
+        const spent = km / this.state.efficiency;
+        this.state.refuelOdoKm += km;
+        this.state.lifetimeOdoKm += km;
+        this.state.currentFuel = Math.max(0, this.state.currentFuel - spent);
+        this.state.cycleTripsCount = (this.state.cycleTripsCount || 0) + 1;
+
+        const now = new Date();
+        this.state.trips.unshift({
+            id: Date.now(), date: now.toLocaleDateString('es-MX'),
+            startTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
+            endTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
+            km: Number(km.toFixed(2)), fuelUsed: Number(spent.toFixed(2)),
+            fuelRemaining: Number(this.state.currentFuel.toFixed(1)),
+            startAddress: startAddr, endAddress: endAddr, addressResolved: true
+        });
+
+        this.saveLocalState(true);
+        this.pushToFirebase();
+    },
+
+    // =========================================================
+    // 3. RELOJ, CLIMA, HOY NO CIRCULA Y AUDIO
+    // =========================================================
     startClock() {
         const tick = () => {
             const now = new Date();
@@ -50,9 +286,7 @@ const App = {
     evaluateHoyNoCircula() {
         const badge = document.getElementById('hnc-badge');
         if (!badge) return;
-        if (this.state.hologram === "0") {
-            badge.className = "pill-badge hnc-ok"; badge.innerText = "🟢 Exento (0)"; return;
-        }
+        if (this.state.hologram === "0") { badge.className = "pill-badge hnc-ok"; badge.innerText = "🟢 Exento (0)"; return; }
         const now = new Date();
         const day = now.getDay();
         const d = parseInt(this.state.plateDigit || "5");
@@ -73,7 +307,7 @@ const App = {
             }
         }
         badge.className = restricted ? "pill-badge hnc-warn" : "pill-badge hnc-ok";
-        badge.innerText = restricted ? "⛔ Hoy No Circula" : "🟢 Circula Libre";
+        badge.innerText = restricted ? "⛔ No Circula" : "🟢 Circula";
     },
 
     async checkWeather(speak = false) {
@@ -86,8 +320,8 @@ const App = {
             if (data?.current) {
                 const temp = Math.round(data.current.temperature_2m);
                 const rain = data.current.precipitation_probability || 0;
-                document.getElementById('weather-badge').innerText = `${rain > 40 ? '🌧️' : '🌡️'} ${temp}°C (${rain}%)`;
-                this.weatherSummary = `La temperatura es de ${temp} grados, con ${rain} por ciento de probabilidad de lluvia.`;
+                document.getElementById('weather-badge').innerText = `${rain > 40 ? '🌧️' : '🌡️'} ${temp}°C`;
+                this.weatherSummary = `Temperatura de ${temp} grados, con ${rain} por ciento de probabilidad de lluvia.`;
                 if (speak) this.triggerAlert(this.weatherSummary, false);
             }
         } catch (e) {}
@@ -160,11 +394,8 @@ const App = {
 
     launchExternalAudio(app) {
         const isAndroid = /Android/i.test(navigator.userAgent);
-        if (app === 'amazon') {
-            window.location.href = isAndroid ? "intent://#Intent;package=com.amazon.mp3;end" : "amznmp3://";
-        } else if (app === 'finamp') {
-            window.location.href = isAndroid ? "intent://#Intent;package=com.unicornsonlsd.finamp;end" : "finamp://";
-        }
+        if (app === 'amazon') window.location.href = isAndroid ? "intent://#Intent;package=com.amazon.mp3;end" : "amznmp3://";
+        else if (app === 'finamp') window.location.href = isAndroid ? "intent://#Intent;package=com.unicornsonlsd.finamp;end" : "finamp://";
     },
 
     triggerAlert(text, isCritical = false) {
@@ -173,91 +404,8 @@ const App = {
 
     testVoiceAlert() {
         const range = Math.round(this.state.currentFuel * this.state.efficiency);
-        const msg = `¡Todo listo en cabina, Mario! Traemos ${this.state.currentFuel.toFixed(1)} litros en el tanque, suficientes para unos ${range} kilómetros. ${this.weatherSummary || '¡Buen viaje!'}`;
+        const msg = `Hola Mario. Tienes ${this.state.currentFuel.toFixed(1)} litros en el tanque, para unos ${range} kilómetros reales. ${this.weatherSummary || 'Buen camino.'}`;
         this.triggerAlert(msg, false);
-    },
-
-    openManualTripModal() {
-        VoiceEngine.initAudio();
-        document.getElementById('manual-start-input').value = '';
-        document.getElementById('manual-end-input').value = '';
-        document.getElementById('manual-km-input').value = '';
-        this.updateManualPreview();
-        document.getElementById('manual-trip-modal').style.display = 'flex';
-    },
-
-    async calculateRouteDistance() {
-        const startText = document.getElementById('manual-start-input').value.trim();
-        const endText = document.getElementById('manual-end-input').value.trim();
-        const btn = document.getElementById('btn-calc-route');
-
-        if (!startText || !endText) return alert('Escribe tanto el punto de inicio como el de destino.');
-        if (!navigator.onLine) return alert('Sin conexión. Ingresa los kilómetros directamente abajo.');
-
-        btn.innerText = '🔍 Calculando ruta por calle...';
-        try {
-            const [sCoord, eCoord] = await Promise.all([this.searchPlaceCoords(startText), this.searchPlaceCoords(endText)]);
-            if (!sCoord || !eCoord) {
-                btn.innerText = '📐 Calcular Kilometraje Automáticamente';
-                return alert('No encontré uno de los puntos. Intenta agregar el municipio (ej. Tlalnepantla, CDMX).');
-            }
-            const routeRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${sCoord.lon},${sCoord.lat};${eCoord.lon},${eCoord.lat}?overview=false`);
-            const routeData = await routeRes.json();
-            const km = routeData?.routes?.[0]?.distance ? (routeData.routes[0].distance / 1000) : (this.haversine(sCoord.lat, sCoord.lon, eCoord.lat, eCoord.lon) * 1.3);
-
-            document.getElementById('manual-km-input').value = km.toFixed(2);
-            this.updateManualPreview();
-            btn.innerText = `✅ Ruta calculada (${km.toFixed(1)} km)`;
-        } catch (e) {
-            btn.innerText = '📐 Calcular Kilometraje Automáticamente';
-            alert('Error al calcular ruta. Ingresa los kilómetros manualmente.');
-        }
-    },
-
-    async searchPlaceCoords(query) {
-        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ', Mexico')}&limit=1`);
-        const d = await r.json();
-        return d?.[0] ? { lat: parseFloat(d[0].lat), lon: parseFloat(d[0].lon) } : null;
-    },
-
-    updateManualPreview() {
-        const km = parseFloat(document.getElementById('manual-km-input').value) || 0;
-        const fuel = km / this.state.efficiency;
-        const rem = Math.max(0, this.state.currentFuel - fuel);
-        document.getElementById('prev-km').innerText = `${km.toFixed(2)} km`;
-        document.getElementById('prev-fuel').innerText = `-${fuel.toFixed(2)} L`;
-        document.getElementById('prev-remaining').innerText = `${rem.toFixed(1)} L`;
-    },
-
-    confirmManualTrip() {
-        const km = parseFloat(document.getElementById('manual-km-input').value);
-        if (isNaN(km) || km <= 0) return alert('Verifica que los kilómetros sean mayores a 0.');
-
-        const startAddr = document.getElementById('manual-start-input').value.trim() || "Registro Manual";
-        const endAddr = document.getElementById('manual-end-input').value.trim() || "Registro Manual";
-        const spent = km / this.state.efficiency;
-
-        if (!confirm(`¿Confirmas guardar este viaje?\n\n• Origen: ${startAddr}\n• Destino: ${endAddr}\n• Distancia: ${km.toFixed(2)} km\n• Consumo: -${spent.toFixed(2)} L`)) return;
-
-        this.state.refuelOdoKm += km;
-        this.state.lifetimeOdoKm += km;
-        this.state.currentFuel = Math.max(0, this.state.currentFuel - spent);
-        this.state.cycleTripsCount = (this.state.cycleTripsCount || 0) + 1;
-
-        const now = new Date();
-        this.state.trips.unshift({
-            id: Date.now(), date: now.toLocaleDateString('es-MX'),
-            startTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
-            endTime: now.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit'}),
-            km: Number(km.toFixed(2)), fuelUsed: Number(spent.toFixed(2)),
-            fuelRemaining: Number(this.state.currentFuel.toFixed(1)),
-            startAddress: startAddr, endAddress: endAddr, addressResolved: true
-        });
-
-        this.closeModal('manual-trip-modal');
-        this.saveLocalState(true);
-        this.pushToFirebase();
-        this.triggerAlert(`Viaje de ${km.toFixed(1)} kilómetros registrado correctamente.`, false);
     },
 
     toggleHudMode() { document.body.classList.toggle('hud-mirror'); },
@@ -270,6 +418,9 @@ const App = {
         }
     },
 
+    // =========================================================
+    // 4. FIREBASE SYNC Y GPS
+    // =========================================================
     saveLocalState(mark = true) {
         if (mark) this.state.lastUpdated = Date.now();
         localStorage.setItem('platina_state_v4', JSON.stringify(this.state));
@@ -287,12 +438,18 @@ const App = {
             else {
                 const trips = this.mergeById(this.state.trips || [], remote.trips || []);
                 const cycles = this.mergeById(this.state.refuelCycles || [], remote.refuelCycles || []);
+                const favs = this.mergeById(this.state.favoriteTrips || [], remote.favoriteTrips || []);
+
                 if ((remote.lastUpdated || 0) > (this.state.lastUpdated || 0)) {
-                    this.state = { ...this.state, ...remote, trips, refuelCycles: cycles, geminiApiKey: this.state.geminiApiKey || remote.geminiApiKey || "" };
+                    this.state = {
+                        ...this.state, ...remote,
+                        trips, refuelCycles: cycles, favoriteTrips: favs,
+                        geminiApiKey: this.state.geminiApiKey || remote.geminiApiKey || ""
+                    };
                     this.saveLocalState(false);
                     if (manual) this.triggerAlert('Datos sincronizados con la nube.', false);
                 } else {
-                    this.state.trips = trips; this.state.refuelCycles = cycles;
+                    this.state.trips = trips; this.state.refuelCycles = cycles; this.state.favoriteTrips = favs;
                     await this.pushToFirebase();
                 }
             }
@@ -316,7 +473,7 @@ const App = {
                 if (!ex || (x.addressResolved && !ex.addressResolved)) map.set(x.id, x);
             }
         });
-        return Array.from(map.values()).sort((x, y) => y.id - x.id);
+        return Array.from(map.values()).sort((x, y) => String(y.id).localeCompare(String(x.id)));
     },
 
     async resolvePendingAddresses() {
@@ -537,6 +694,10 @@ const App = {
     },
 
     openSettings() {
+        const analysis = this.computeHistoricalEfficiency();
+        document.getElementById('historical-calc-summary').innerHTML = analysis.detail;
+        document.getElementById('btn-apply-hist-eff').innerText = `✨ Aplicar ${analysis.avg} km/L al Tablero`;
+
         document.getElementById('input-efficiency').value = this.state.efficiency;
         document.getElementById('input-current-fuel').value = this.state.currentFuel.toFixed(1);
         document.getElementById('input-plate-digit').value = this.state.plateDigit || '5';
@@ -575,6 +736,11 @@ const App = {
         document.getElementById('refuel-odo-km').innerText = (this.state.refuelOdoKm || 0).toFixed(1);
         document.getElementById('refuel-reminder-banner').style.display = this.state.planToRefuelToday ? 'flex' : 'none';
 
+        const analysis = this.computeHistoricalEfficiency();
+        const histBadge = document.getElementById('hist-eff-badge');
+        if (histBadge && analysis.avg) histBadge.innerText = `(Hist: ${analysis.avg})`;
+
+        this.renderFavoritesUI();
         this.evaluateHoyNoCircula();
 
         const paidCycles = (this.state.refuelCycles || []).filter(c => c.costPaid > 0 && c.kmDriven > 0);

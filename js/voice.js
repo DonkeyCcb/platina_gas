@@ -35,8 +35,8 @@ const VoiceEngine = {
 
         if (navigator.onLine && state.geminiApiKey && state.aiVoice !== 'local') {
             try {
-                if (vBadge) vBadge.innerText = `🎙️ IA: ${state.aiVoice}...`;
-                const directorPrompt = `Actúa como una copiloto de cabina moderna, cálida, expresiva y carismática de México. Usa entonación conversacional muy natural, ritmo fluido y cero tono robótico para decir exactamente esto: "${text}"`;
+                if (vBadge) vBadge.innerText = `🎙️ Conectando IA...`;
+                const directorPrompt = `Lee en español de México con tono cálido, natural y expresivo de asistente moderno: ${text}`;
 
                 const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${state.geminiApiKey}`, {
                     method: 'POST',
@@ -45,50 +45,100 @@ const VoiceEngine = {
                         contents: [{ parts: [{ text: directorPrompt }] }],
                         generationConfig: {
                             responseModalities: ["AUDIO"],
-                            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: state.aiVoice || "Aoede" } } }
+                            speechConfig: {
+                                voiceConfig: {
+                                    prebuiltVoiceConfig: { voiceName: state.aiVoice || "Aoede" }
+                                }
+                            }
                         }
                     })
                 });
-                const data = await res.json();
-                const pcmBase64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-                if (pcmBase64) {
-                    if (vBadge) vBadge.innerText = `🎙️ IA Neural (${state.aiVoice})`;
-                    this.playPcmAudio(pcmBase64, 24000, onEndCallback);
-                    return;
+
+                if (res.ok) {
+                    const data = await res.json();
+                    const part = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+                    if (part?.data) {
+                        if (vBadge) vBadge.innerText = `🎙️ IA (${state.aiVoice})`;
+                        this.playRawPcmAsWav(part.data, 24000, onEndCallback);
+                        return;
+                    }
+                } else {
+                    const errInfo = await res.json().catch(() => ({}));
+                    console.warn("Gemini TTS error:", res.status, errInfo);
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.warn("Error red Gemini TTS:", e);
+            }
         }
 
-        if (vBadge) vBadge.innerText = !state.geminiApiKey ? `🔊 Local (Sin API Key)` : `🔊 Voz Local`;
-        this.speakLocalEnhanced(text, onEndCallback);
+        if (vBadge) vBadge.innerText = !state.geminiApiKey ? `🔊 Local (Sin Key)` : `🔊 Voz Natural Local`;
+        this.speakLocalModern(text, onEndCallback);
     },
 
-    playPcmAudio(base64, sampleRate = 24000, onEndCallback) {
-        this.initAudio();
-        const binary = atob(base64);
-        const len = binary.length / 2;
-        const buffer = this.audioCtx.createBuffer(1, len, sampleRate);
-        const channel = buffer.getChannelData(0);
-        const view = new DataView(new ArrayBuffer(binary.length));
-        for (let i = 0; i < binary.length; i++) view.setUint8(i, binary.charCodeAt(i));
-        for (let i = 0; i < len; i++) channel[i] = view.getInt16(i * 2, true) / 32768;
-        const source = this.audioCtx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(this.audioCtx.destination);
-        source.onended = () => { if (onEndCallback) onEndCallback(); };
-        source.start();
+    // Empaqueta PCM 16-bit en un contenedor WAV válido para iOS Safari y Android Chrome
+    playRawPcmAsWav(base64Pcm, sampleRate = 24000, onEndCallback) {
+        try {
+            const binary = atob(base64Pcm);
+            const pcmLen = binary.length;
+            const wavBuffer = new ArrayBuffer(44 + pcmLen);
+            const view = new DataView(wavBuffer);
+
+            const writeStr = (offset, str) => {
+                for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+            };
+
+            writeStr(0, 'RIFF');
+            view.setUint32(4, 36 + pcmLen, true);
+            writeStr(8, 'WAVE');
+            writeStr(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true); // PCM
+            view.setUint16(22, 1, true); // Mono
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeStr(36, 'data');
+            view.setUint32(40, pcmLen, true);
+
+            for (let i = 0; i < pcmLen; i++) {
+                view.setUint8(44 + i, binary.charCodeAt(i));
+            }
+
+            const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.onended = () => {
+                URL.revokeObjectURL(url);
+                if (onEndCallback) onEndCallback();
+            };
+            audio.play().catch(() => this.speakLocalModern("", onEndCallback));
+        } catch (e) {
+            if (onEndCallback) onEndCallback();
+        }
     },
 
-    speakLocalEnhanced(text, onEndCallback) {
-        if (!('speechSynthesis' in window)) { if (onEndCallback) onEndCallback(); return; }
+    // Selector inteligente de la voz más moderna/neuronal instalada en el dispositivo
+    speakLocalModern(text, onEndCallback) {
+        if (!text || !('speechSynthesis' in window)) { if (onEndCallback) onEndCallback(); return; }
         window.speechSynthesis.cancel();
+
         const utter = new SpeechSynthesisUtterance(text);
         const voices = window.speechSynthesis.getVoices();
-        const preferred = voices.find(v => v.lang.includes('es') && /Natural|Online|Paulina|Monica|Sabina|Google español/i.test(v.name))
-                       || voices.find(v => v.lang === 'es-MX') || voices.find(v => v.lang.startsWith('es'));
-        if (preferred) utter.voice = preferred;
-        utter.lang = 'es-MX'; utter.rate = 1.04; utter.pitch = 1.05;
+
+        // Ranking de voces modernas en iOS (Enhanced/Premium/Paulina/Mónica) y Android (Google Network/Natural)
+        const rankedVoice =
+            voices.find(v => v.lang.includes('es') && /Enhanced|Premium|Natural|Neural/i.test(v.name)) ||
+            voices.find(v => v.lang === 'es-MX' && /Paulina|Google/i.test(v.name)) ||
+            voices.find(v => v.lang.includes('es') && /Monica|Mónica|Sabina|Helena|Google español/i.test(v.name)) ||
+            voices.find(v => v.lang === 'es-MX') ||
+            voices.find(v => v.lang.startsWith('es'));
+
+        if (rankedVoice) utter.voice = rankedVoice;
+        utter.lang = 'es-MX';
+        utter.rate = 0.98;  // Ritmo pausado y natural
+        utter.pitch = 1.03; // Entonación cálida
         utter.onend = () => { if (onEndCallback) onEndCallback(); };
-        setTimeout(() => window.speechSynthesis.speak(utter), 350);
+        setTimeout(() => window.speechSynthesis.speak(utter), 300);
     }
 };
