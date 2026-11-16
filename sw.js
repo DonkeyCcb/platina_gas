@@ -1,4 +1,4 @@
-const CACHE = 'platina-v7-1';
+const CACHE = 'platina-v7-2';
 const ASSETS = ['./', './index.html', './css/aero-cobalt.css', './js/voice.js', './js/app.js'];
 
 self.addEventListener('install', e => {
