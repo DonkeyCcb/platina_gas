@@ -24,7 +24,6 @@ body {
 
 body.hud-mirror { transform: scaleX(-1); background-color: #000000; }
 
-/* Cabecera */
 .telemetry-header {
     display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
     padding: 8px 12px; background: rgba(15, 23, 42, 0.92); border-radius: 16px;
@@ -49,7 +48,6 @@ body.hud-mirror { transform: scaleX(-1); background-color: #000000; }
 .dot.searching { background-color: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber); }
 .dot.active { background-color: var(--accent-emerald); box-shadow: 0 0 8px var(--accent-emerald); }
 
-/* Barra Rápida de Cabina */
 .cockpit-utility-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
 .util-btn { background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 6px 10px; font-size: 0.72rem; font-weight: 600; color: var(--text-secondary); box-shadow: none; }
 .util-status { font-size: 0.68rem; font-weight: 700; color: var(--cobalt-primary); background: rgba(56, 189, 248, 0.1); padding: 5px 10px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.25); }
@@ -67,7 +65,6 @@ body.hud-mirror { transform: scaleX(-1); background-color: #000000; }
 .section-tag { font-size: 0.72rem; font-weight: 700; color: var(--text-secondary); letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
 .cost-pill { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--text-secondary); background: rgba(6,9,17,0.7); padding: 3px 8px; border-radius: 8px; border: 1px solid var(--border-subtle); }
 
-/* Velocímetro Stitch Punteado Detrás del Cero */
 .speed-cluster { display: flex; justify-content: center; align-items: center; padding: 6px 0 14px 0; position: relative; height: 125px; }
 .speed-ring-stitch {
     position: absolute; width: 200px; height: 100px;
@@ -88,7 +85,6 @@ body.hud-mirror { transform: scaleX(-1); background-color: #000000; }
 .highlight-cobalt { color: var(--cobalt-primary); }
 .highlight-amber { color: var(--accent-amber); }
 
-/* Barra de Viajes Frecuentes en 1 Clic */
 .favorites-quick-bar {
     margin-top: 10px; background: rgba(6, 9, 17, 0.65); border: 1px solid rgba(56, 189, 248, 0.2);
     border-radius: 14px; padding: 8px 10px;
@@ -101,9 +97,7 @@ body.hud-mirror { transform: scaleX(-1); background-color: #000000; }
     background: rgba(56, 189, 248, 0.15); color: var(--cobalt-primary);
     padding: 3px 8px; border-radius: 6px; font-size: 0.65rem; box-shadow: none;
 }
-.fav-chips-scroll {
-    display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px;
-}
+.fav-chips-scroll { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
 .fav-chip {
     background: linear-gradient(135deg, #1e293b, #0f172a); border: 1px solid rgba(56, 189, 248, 0.35);
     color: var(--text-primary); padding: 7px 10px; border-radius: 10px; font-size: 0.74rem;
@@ -112,7 +106,6 @@ body.hud-mirror { transform: scaleX(-1); background-color: #000000; }
 .fav-chip span { color: var(--accent-amber); font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; }
 .fav-empty-hint { font-size: 0.7rem; color: var(--text-secondary); font-style: italic; }
 
-/* Tanque Virtual */
 .fuel-top-row { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 10px; }
 .fuel-big-reading { font-family: 'JetBrains Mono', monospace; font-size: 2.1rem; font-weight: 800; line-height: 1; }
 .fuel-big-reading small { font-size: 1.1rem; }
@@ -121,7 +114,6 @@ body.hud-mirror { transform: scaleX(-1); background-color: #000000; }
 .fuel-pct-badge { position: absolute; right: 10px; top: 0; bottom: 0; display: flex; align-items: center; font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 0.72rem; color: #fff; text-shadow: 0 1px 3px #000; }
 .fuel-scale-labels { display: flex; justify-content: space-between; font-size: 0.65rem; font-weight: 700; color: var(--text-secondary); padding: 0 4px; margin-bottom: 8px; }
 
-/* Botones */
 .btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 10px; }
 button {
     border: none; border-radius: 14px; padding: 12px 10px; font-size: 0.84rem;
@@ -136,7 +128,6 @@ button:active { transform: scale(0.96); }
 .btn-obsidian { background: rgba(20, 29, 46, 0.9); border: 1px solid var(--border-subtle); color: var(--text-primary); }
 .btn-violet { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
 
-/* Dock Multimedia */
 .media-dock { margin-top: 12px; padding: 12px 16px; gap: 10px; }
 .media-top-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .media-track-info { display: flex; align-items: center; gap: 8px; overflow: hidden; flex: 1; }
@@ -156,7 +147,6 @@ button:active { transform: scale(0.96); }
 
 .cockpit-footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 6px 2px 6px; font-size: 0.68rem; font-weight: 700; color: var(--text-secondary); letter-spacing: 0.5px; }
 
-/* Banners, Modales y Bitácora */
 .banner { display: none; padding: 10px 14px; border-radius: 12px; font-weight: 700; font-size: 0.82rem; margin-bottom: 10px; align-items: center; justify-content: space-between; }
 #alert-banner { background: rgba(239, 68, 68, 0.9); color: #fff; justify-content: center; }
 #refuel-reminder-banner { background: rgba(245, 158, 11, 0.18); border: 1px solid rgba(245, 158, 11, 0.5); color: #fde68a; }
