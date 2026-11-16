@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#060911">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Platina v7.0 — Donkey Cockpit OS</title>
+    <title>Platina v7.2 — Donkey Cockpit OS</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/aero-cobalt.css">
 </head>
@@ -18,12 +18,12 @@
                 <div id="gps-dot" class="dot"></div>
                 <span id="gps-status">GPS: Off</span>
             </div>
-            <div id="hnc-badge" class="pill-badge hnc-ok" title="Estado Hoy No Circula">🟢 Circula</div>
+            <div id="hnc-badge" class="pill-badge hnc-ok">🟢 Circula</div>
         </div>
 
         <div class="header-center">
             <div id="clock-time" class="clock-time">00:00</div>
-            <div id="clock-date" class="clock-date">CARGANDO FECHA...</div>
+            <div id="clock-date" class="clock-date">CARGANDO...</div>
         </div>
 
         <div class="header-right">
@@ -34,14 +34,14 @@
         </div>
     </header>
 
-    <!-- Barra de Herramientas Rápidas de Cabina -->
+    <!-- Barra de Herramientas Rápidas -->
     <div class="cockpit-utility-bar">
-        <button class="util-btn" onclick="App.toggleHudMode()">🪞 Modo HUD</button>
-        <button class="util-btn" onclick="App.openParkedCarLocation()">📍 ¿Dónde dejé el auto?</button>
+        <button class="util-btn" onclick="App.toggleHudMode()">🪞 HUD</button>
+        <button class="util-btn" onclick="App.openParkedCarLocation()">📍 Auto</button>
         <div id="voice-engine-badge" class="util-status">🎙️ Voz: Lista</div>
     </div>
 
-    <!-- Banners de Alerta -->
+    <!-- Banners -->
     <div id="alert-banner" class="banner">⚠️ ¡NIVEL DE GASOLINA BAJO!</div>
     <div id="refuel-reminder-banner" class="banner">
         <span>⛽ Recordatorio: Hoy planeaste recargar gas</span>
@@ -76,12 +76,23 @@
                 </div>
             </div>
 
+            <!-- Acceso Rápido a Viajes Frecuentes en 1 Clic -->
+            <div class="favorites-quick-bar">
+                <div class="fav-bar-header">
+                    <span>⭐ VIAJES FRECUENTES (1 CLIC)</span>
+                    <button class="fav-manage-btn" onclick="App.openManualTripModal('favorites')">+ Gestionar</button>
+                </div>
+                <div id="quick-favorites-list" class="fav-chips-scroll">
+                    <span class="fav-empty-hint">Sin favoritos aún. Toca "+ Gestionar" para agregar.</span>
+                </div>
+            </div>
+
             <div>
                 <div class="btn-grid">
                     <button id="btn-gps-toggle" class="btn-cobalt" onclick="App.handleStartStopClick()">▶ Iniciar Viaje</button>
-                    <button class="btn-obsidian" onclick="App.openManualTripModal()">＋ Viaje Manual</button>
+                    <button class="btn-obsidian" onclick="App.openManualTripModal('manual')">＋ Viaje / Favorito</button>
                 </div>
-                <button id="btn-history" class="btn-obsidian" style="margin-top:10px;width:100%;" onclick="App.openHistoryModal()">
+                <button id="btn-history" class="btn-obsidian" style="margin-top:8px;width:100%;" onclick="App.openHistoryModal()">
                     📊 Historial de Viajes y Ciclos
                 </button>
             </div>
@@ -112,8 +123,8 @@
                         <div class="metric-label">AUTONOMÍA EST.</div>
                         <div class="metric-val highlight-cobalt"><span id="range-km">500</span> <small>km</small></div>
                     </div>
-                    <div class="metric-tile">
-                        <div class="metric-label">RENDIMIENTO</div>
+                    <div class="metric-tile" onclick="App.openSettings()" style="cursor:pointer;" title="Toca para calibrar rendimiento">
+                        <div class="metric-label">RENDIMIENTO <span id="hist-eff-badge" style="color:var(--accent-emerald);"></span></div>
                         <div class="metric-val"><span id="efficiency-val">10.0</span> <small>km/L</small></div>
                     </div>
                 </div>
@@ -124,7 +135,7 @@
                     <button class="btn-amber" onclick="App.openRefuelModal()">⛽ Ingresar Litros</button>
                     <button class="btn-cobalt" onclick="App.fillTankQuick()">✓ Lleno (50L)</button>
                 </div>
-                <div class="btn-grid" style="margin-top:10px;">
+                <div class="btn-grid" style="margin-top:8px;">
                     <button class="btn-obsidian" onclick="App.adjustTrafficFuel()"><span class="highlight-amber">-1 L</span> (Tráfico)</button>
                     <button class="btn-obsidian" onclick="App.testVoiceAlert()">🎙️ Probar Voz</button>
                 </div>
@@ -132,7 +143,7 @@
         </section>
     </main>
 
-    <!-- DOCK MULTIMEDIA: FINAMP / LOCAL MP3 / AMAZON MUSIC -->
+    <!-- DOCK MULTIMEDIA -->
     <section class="media-dock aero-card">
         <div class="media-top-row">
             <div class="media-track-info">
@@ -146,7 +157,6 @@
                 <button class="chip-btn chip-amazon" onclick="App.launchExternalAudio('amazon')">🎧 Amazon</button>
             </div>
         </div>
-
         <div class="media-controls-row">
             <div class="player-btns">
                 <button class="ctrl-btn" onclick="App.prevTrack()">⏮</button>
@@ -162,43 +172,66 @@
     </section>
 
     <footer class="cockpit-footer">
-        <div><span class="dot active" style="display:inline-block;margin-right:6px;"></span>DONKEY COCKPIT OS v7.0</div>
+        <div><span class="dot active" style="display:inline-block;margin-right:6px;"></span>DONKEY COCKPIT OS v7.2</div>
         <div><span style="color:var(--cobalt-primary);">ECU: OK</span> &nbsp;|&nbsp; <span id="footer-parked-status">PIN: LISTO</span></div>
     </footer>
 
-    <!-- MODAL 1: VIAJE MANUAL INTELIGENTE (ORIGEN -> DESTINO CON CONFIRMACIÓN) -->
+    <!-- MODAL 1: VIAJES FRECUENTES Y VIAJE MANUAL -->
     <div id="manual-trip-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <div class="modal-title">🗺️ Registrar Viaje Manual</div>
+                <div class="modal-title">🗺️ Viajes Frecuentes y Manuales</div>
                 <button class="btn-obsidian" style="padding:4px 10px;" onclick="App.closeModal('manual-trip-modal')">✕</button>
             </div>
-            <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:12px;">
-                Escribe inicio y destino para calcular los kilómetros automáticamente por calle, o escríbelos directo abajo.
-            </p>
-            <div class="form-group">
-                <label>🟢 Punto de Inicio (Calle, Colonia o Municipio):</label>
-                <input type="text" id="manual-start-input" placeholder="Ej. Tlalnepantla Centro, EdoMex">
+
+            <div class="tabs">
+                <button id="tab-fav-btn" class="tab-btn active" onclick="App.switchManualModalTab('favorites')">⭐ Frecuentes (<span id="count-favs">0</span>)</button>
+                <button id="tab-new-manual-btn" class="tab-btn" onclick="App.switchManualModalTab('manual')">✏️ Ruta Nueva / Crear</button>
             </div>
-            <div class="form-group">
-                <label>🔴 Punto de Destino:</label>
-                <input type="text" id="manual-end-input" placeholder="Ej. Toreo, Naucalpan">
+
+            <!-- Pestaña A: Lista de Favoritos para 1 Clic -->
+            <div id="modal-favorites-view">
+                <p style="font-size:0.76rem;color:var(--text-secondary);margin-bottom:10px;">
+                    Toca un viaje frecuente para registrarlo al instante cuando hayas olvidado activar el GPS:
+                </p>
+                <div id="modal-favorites-list" class="history-list" style="max-height:42vh;"></div>
+                <button class="btn-cobalt" style="width:100%;" onclick="App.switchManualModalTab('manual')">
+                    ＋ Crear Nuevo Viaje Frecuente
+                </button>
             </div>
-            <button id="btn-calc-route" class="btn-cobalt" style="width:100%;margin-bottom:12px;" onclick="App.calculateRouteDistance()">
-                📐 Calcular Kilometraje Automáticamente
-            </button>
-            <div class="form-group">
-                <label>Kilómetros del Trayecto (Editable):</label>
-                <input type="number" id="manual-km-input" step="0.1" placeholder="0.0" oninput="App.updateManualPreview()">
-            </div>
-            <div id="manual-confirm-box" class="confirm-preview-box">
-                <div class="preview-row"><span>Distancia a registrar:</span> <strong id="prev-km">0.0 km</strong></div>
-                <div class="preview-row"><span>Gasolina estimada:</span> <strong id="prev-fuel" class="highlight-amber">-0.00 L</strong></div>
-                <div class="preview-row"><span>Tanque quedará en:</span> <strong id="prev-remaining" class="highlight-cobalt">50.0 L</strong></div>
-            </div>
-            <div class="btn-grid" style="margin-top:14px;">
-                <button class="btn-emerald" onclick="App.confirmManualTrip()">✅ Confirmar y Guardar</button>
-                <button class="btn-obsidian" onclick="App.closeModal('manual-trip-modal')">Cancelar</button>
+
+            <!-- Pestaña B: Formulario Ruta Nueva y Guardar como Favorito -->
+            <div id="modal-manual-form-view" style="display:none;">
+                <div class="form-group">
+                    <label>🏷️ Nombre Corto (Para guardarlo en Favoritos, ej. "Escuela", "Trabajo"):</label>
+                    <input type="text" id="manual-fav-name" placeholder="Ej. Ruta Escuela (Ida)">
+                </div>
+                <div class="form-group">
+                    <label>🟢 Punto de Inicio:</label>
+                    <input type="text" id="manual-start-input" placeholder="Ej. Casa Tlalnepantla">
+                </div>
+                <div class="form-group">
+                    <label>🔴 Punto de Destino:</label>
+                    <input type="text" id="manual-end-input" placeholder="Ej. Colegio / Oficina">
+                </div>
+                <button id="btn-calc-route" class="btn-obsidian" style="width:100%;margin-bottom:10px;border-color:var(--cobalt-primary);" onclick="App.calculateRouteDistance()">
+                    📐 Calcular Kilómetros por Calle
+                </button>
+                <div class="form-group">
+                    <label>Kilómetros del Trayecto (Editable):</label>
+                    <input type="number" id="manual-km-input" step="0.1" placeholder="0.0" oninput="App.updateManualPreview()">
+                </div>
+
+                <div id="manual-confirm-box" class="confirm-preview-box">
+                    <div class="preview-row"><span>Distancia:</span> <strong id="prev-km">0.0 km</strong></div>
+                    <div class="preview-row"><span>Consumo estimado:</span> <strong id="prev-fuel" class="highlight-amber">-0.00 L</strong></div>
+                    <div class="preview-row"><span>Tanque quedará en:</span> <strong id="prev-remaining" class="highlight-cobalt">50.0 L</strong></div>
+                </div>
+
+                <div class="btn-grid" style="margin-top:12px;">
+                    <button class="btn-emerald" onclick="App.confirmManualTrip(false)">✅ Solo Registrar</button>
+                    <button class="btn-cobalt" onclick="App.confirmManualTrip(true)">⭐ Guardar y Registrar</button>
+                </div>
             </div>
         </div>
     </div>
@@ -267,17 +300,29 @@
         </div>
     </div>
 
-    <!-- MODAL 5: AJUSTES -->
+    <!-- MODAL 5: AJUSTES Y CALIBRACIÓN HISTÓRICA -->
     <div id="settings-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <div class="modal-title">⚙️ Configuración de Cabina v7</div>
+                <div class="modal-title">⚙️ Calibración & Cabina v7.2</div>
                 <button class="btn-obsidian" style="padding:4px 10px;" onclick="App.closeModal('settings-modal')">✕</button>
             </div>
+
+            <!-- Bloque de Diagnóstico Histórico Real -->
+            <div class="confirm-preview-box" style="margin-bottom:12px;border-color:var(--accent-emerald);">
+                <div style="font-size:0.72rem;font-weight:800;color:var(--accent-emerald);">📐 ANÁLISIS HISTÓRICO REAL (FIREBASE)</div>
+                <div id="historical-calc-summary" style="font-size:0.78rem;color:var(--text-secondary);line-height:1.4;">
+                    Calculando promedio con tus registros...
+                </div>
+                <button id="btn-apply-hist-eff" class="btn-emerald" style="padding:8px;font-size:0.78rem;margin-top:4px;" onclick="App.applyHistoricalEfficiency()">
+                    ✨ Aplicar Rendimiento Real Calculado
+                </button>
+            </div>
+
             <div class="btn-grid" style="margin-bottom:10px;">
                 <div class="form-group" style="margin:0;">
                     <label>Rendimiento (km/L):</label>
-                    <input type="number" id="input-efficiency" step="0.5" value="10.0">
+                    <input type="number" id="input-efficiency" step="0.1" value="8.2">
                 </div>
                 <div class="form-group" style="margin:0;">
                     <label>Litros Actuales:</label>
@@ -305,21 +350,20 @@
                 </div>
             </div>
             <div class="form-group">
-                <label>Voz Neuronal Expresiva Gemini (Online):</label>
+                <label>Voz Neuronal Gemini (Online):</label>
                 <select id="input-ai-voice">
-                    <option value="Aoede">Aoede (Femenina, Cálida y Expresiva)</option>
-                    <option value="Puck">Puck (Masculina, Dinámica y Moderna)</option>
-                    <option value="Kore">Kore (Femenina, Clara y Ejecutiva)</option>
-                    <option value="Charon">Charon (Masculina, Profunda)</option>
-                    <option value="local">Solo Voz del Teléfono (Offline)</option>
+                    <option value="Aoede">Aoede (Femenina, Cálida y Moderna)</option>
+                    <option value="Puck">Puck (Masculina, Dinámica)</option>
+                    <option value="Kore">Kore (Femenina, Ejecutiva)</option>
+                    <option value="local">Solo Voz Natural del Teléfono (Offline)</option>
                 </select>
             </div>
             <div class="form-group">
-                <label>Gemini API Key (Voz Neuronal y Tickets):</label>
+                <label>Gemini API Key:</label>
                 <input type="password" id="input-gemini-key" placeholder="AIzaSy...">
             </div>
             <div class="form-group">
-                <label>URL Stream Audio / Navidrome (Opcional):</label>
+                <label>URL Stream Navidrome / Finamp (Opcional):</label>
                 <input type="text" id="input-stream-url" placeholder="http://192.168.1.X:4533/rest/stream...">
             </div>
             <div class="btn-grid">
