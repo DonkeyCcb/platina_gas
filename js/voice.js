@@ -62,20 +62,14 @@ const VoiceEngine = {
                         this.playRawPcmAsWav(part.data, 24000, onEndCallback);
                         return;
                     }
-                } else {
-                    const errInfo = await res.json().catch(() => ({}));
-                    console.warn("Gemini TTS error:", res.status, errInfo);
                 }
-            } catch (e) {
-                console.warn("Error red Gemini TTS:", e);
-            }
+            } catch (e) {}
         }
 
         if (vBadge) vBadge.innerText = !state.geminiApiKey ? `🔊 Local (Sin Key)` : `🔊 Voz Natural Local`;
         this.speakLocalModern(text, onEndCallback);
     },
 
-    // Empaqueta PCM 16-bit en un contenedor WAV válido para iOS Safari y Android Chrome
     playRawPcmAsWav(base64Pcm, sampleRate = 24000, onEndCallback) {
         try {
             const binary = atob(base64Pcm);
@@ -92,8 +86,8 @@ const VoiceEngine = {
             writeStr(8, 'WAVE');
             writeStr(12, 'fmt ');
             view.setUint32(16, 16, true);
-            view.setUint16(20, 1, true); // PCM
-            view.setUint16(22, 1, true); // Mono
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
             view.setUint32(24, sampleRate, true);
             view.setUint32(28, sampleRate * 2, true);
             view.setUint16(32, 2, true);
@@ -118,7 +112,6 @@ const VoiceEngine = {
         }
     },
 
-    // Selector inteligente de la voz más moderna/neuronal instalada en el dispositivo
     speakLocalModern(text, onEndCallback) {
         if (!text || !('speechSynthesis' in window)) { if (onEndCallback) onEndCallback(); return; }
         window.speechSynthesis.cancel();
@@ -126,7 +119,6 @@ const VoiceEngine = {
         const utter = new SpeechSynthesisUtterance(text);
         const voices = window.speechSynthesis.getVoices();
 
-        // Ranking de voces modernas en iOS (Enhanced/Premium/Paulina/Mónica) y Android (Google Network/Natural)
         const rankedVoice =
             voices.find(v => v.lang.includes('es') && /Enhanced|Premium|Natural|Neural/i.test(v.name)) ||
             voices.find(v => v.lang === 'es-MX' && /Paulina|Google/i.test(v.name)) ||
@@ -136,8 +128,8 @@ const VoiceEngine = {
 
         if (rankedVoice) utter.voice = rankedVoice;
         utter.lang = 'es-MX';
-        utter.rate = 0.98;  // Ritmo pausado y natural
-        utter.pitch = 1.03; // Entonación cálida
+        utter.rate = 0.98;
+        utter.pitch = 1.03;
         utter.onend = () => { if (onEndCallback) onEndCallback(); };
         setTimeout(() => window.speechSynthesis.speak(utter), 300);
     }

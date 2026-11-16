@@ -41,20 +41,14 @@ const App = {
         });
     },
 
-    // =========================================================
-    // 1. CÁLCULO HISTÓRICO REAL DE CONSUMO (LITROS VS KILÓMETROS)
-    // =========================================================
     computeHistoricalEfficiency() {
         const cycles = (this.state.refuelCycles || []).filter(c => c.kmDriven > 5 && c.litersAdded > 1);
         const trips = this.state.trips || [];
 
         let totalClosedKm = cycles.reduce((sum, c) => sum + Number(c.kmDriven || 0), 0);
         let totalClosedLiters = cycles.reduce((sum, c) => sum + Number(c.litersAdded || 0), 0);
-
         let totalAllTripsKm = trips.reduce((sum, t) => sum + Number(t.km || 0), 0);
-        let totalAllLitersPut = totalClosedLiters;
 
-        // Si hubo tanque lleno inicial de 50L antes del primer ciclo registrado:
         if (cycles.length > 0) {
             const estKmPerLiter = totalClosedKm / totalClosedLiters;
             if (estKmPerLiter > 3 && estKmPerLiter < 22) {
@@ -66,7 +60,6 @@ const App = {
             }
         }
 
-        // Si aún no hay ciclos cerrados con recarga posterior, estimamos con el total de km recorridos vs tanque de 50L
         if (totalAllTripsKm > 20) {
             const consumedFrom50 = Math.max(10, 50 - (this.state.currentFuel || 0));
             const est = Number((totalAllTripsKm / consumedFrom50).toFixed(2));
@@ -79,7 +72,6 @@ const App = {
             }
         }
 
-        // Parámetro calibrado real para Nissan Platina 2004 en rutas de cerro/ciudad CDMX
         this.calculatedHistEfficiency = 8.1;
         return {
             avg: 8.1,
@@ -96,9 +88,6 @@ const App = {
         this.triggerAlert(`Rendimiento calibrado a ${analysis.avg} kilómetros por litro según tu historial.`, false);
     },
 
-    // =========================================================
-    // 2. VIAJES FRECUENTES / FAVORITOS (1 CLIC)
-    // =========================================================
     renderFavoritesUI() {
         const favs = this.state.favoriteTrips || [];
         const barEl = document.getElementById('quick-favorites-list');
@@ -269,9 +258,6 @@ const App = {
         this.pushToFirebase();
     },
 
-    // =========================================================
-    // 3. RELOJ, CLIMA, HOY NO CIRCULA Y AUDIO
-    // =========================================================
     startClock() {
         const tick = () => {
             const now = new Date();
@@ -418,9 +404,6 @@ const App = {
         }
     },
 
-    // =========================================================
-    // 4. FIREBASE SYNC Y GPS
-    // =========================================================
     saveLocalState(mark = true) {
         if (mark) this.state.lastUpdated = Date.now();
         localStorage.setItem('platina_state_v4', JSON.stringify(this.state));
